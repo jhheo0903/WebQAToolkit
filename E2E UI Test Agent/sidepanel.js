@@ -6,6 +6,8 @@ let loadedScenarios = [];    // 불러온 시나리오 목록
 let selectedScenario = null; // 현재 선택된 시나리오
 let lastLoadedFileText = null; // 마지막으로 읽은 파일 내용 (새로고침 폴백용)
 let fileHandle = null;        // FileSystemFileHandle — 파일 재읽기(새로고침)용
+let iframeOnlyMode = false;   // true면 서브 iframe DOM만 대상으로 동작
+let stopRequested = false;
 
 // 시나리오 인덱스 → 'pass' | 'fail' 결과 보존 (파일 재로드 전까지 유지)
 const scenarioResults = new Map();
@@ -21,9 +23,13 @@ const scenarioResults = new Map();
   // ── 실행 버튼 ──
   document.getElementById('runBtn').addEventListener('click', startAgent);
   document.getElementById('clearBtn').addEventListener('click', clearLog);
+  document.getElementById('stopBtn').addEventListener('click', requestStopAgent);
 
   // ── 설정 저장 ──
   document.getElementById('saveBtn').addEventListener('click', saveProviderConfig);
+
+  // iframe 전용 모드: 체크 즉시 전역 저장
+  document.getElementById('iframeOnlyCheckbox').addEventListener('change', onIframeOnlyModeChange);
 
   // ── 파일 불러오기 / 새로고침 ──
   document.getElementById('loadBtn').addEventListener('click', openFileAndLoad);
@@ -446,29 +452,81 @@ async function getActiveTabId() {
 
 // ─── 탭 통신 ─────────────────────────────────────────
 
-async function pingTab(tabId) {
+async function pingTarget(tabId, frameId = 0) {
   try {
-    const res = await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+    const res = await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId });
     return res?.alive === true;
   } catch { return false; }
 }
 
-async function sendToTab(tabId, message) {
-  const alive = await pingTab(tabId);
+async function sendToTarget(tabId, message, frameId = 0) {
+  const alive = await pingTarget(tabId, frameId);
   if (!alive) {
     try {
-      await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+      await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, files: ['content.js'] });
       await sleep(500);
     } catch (e) {
       const { t } = globalThis.i18n;
       throw new Error(t.errInjectFail(e.message));
     }
-    if (!await pingTab(tabId)) {
+    if (!await pingTarget(tabId, frameId)) {
       const { t } = globalThis.i18n;
       throw new Error(t.errContentNoResp);
     }
   }
-  return await chrome.tabs.sendMessage(tabId, message);
+  return await chrome.tabs.sendMessage(tabId, message, { frameId });
+}
+
+// 기존 호출부와의 호환용 래퍼: 기본은 top frame
+async function sendToTab(tabId, message) {
+  return sendToTarget(tabId, message, 0);
+}
+
+async function readBestIframeDomState(t, tabId) {
+  if (!chrome.webNavigation?.getAllFrames) {
+    return { success: false, error: t.errIframeNoDom };
+  }
+
+  let frames = [];
+  try {
+    frames = await chrome.webNavigation.getAllFrames({ tabId });
+  } catch {
+    return { success: false, error: t.errIframeNoDom };
+  }
+
+  const childFrames = frames.filter(f => f.frameId !== 0);
+  if (childFrames.length === 0) {
+    return { success: false, error: t.errIframeNoDom };
+  }
+
+  let best = null;
+  for (const frame of childFrames) {
+    const resp = await sendToTarget(tabId, { type: 'GET_DOM' }, frame.frameId).catch(() => null);
+    if (!resp?.success || !resp.data) continue;
+    const count = resp.data.elementCount || 0;
+    if (!best || count > best.count) {
+      best = {
+        frameId: frame.frameId,
+        frameUrl: frame.url || resp.data.url,
+        state: resp.data,
+        count,
+      };
+    }
+  }
+
+  if (!best || best.count <= 0) {
+    return { success: false, error: t.errIframeNoDom };
+  }
+
+  return {
+    success: true,
+    data: {
+      ...best.state,
+      frameId: best.frameId,
+      frameUrl: best.frameUrl,
+      isIframe: true,
+    },
+  };
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -490,7 +548,7 @@ function waitForTabLoad(tabId) {
 // - 탭 status가 complete로 바뀌면 즉시 완료 (전체 페이지 로드)
 // - SPA 라우팅처럼 status 변화가 없으면 stableMs 동안 변화 없을 때 완료
 // - maxMs 초과 시 강제 완료
-async function waitForDomStable(tabId, { stableMs = 600, maxMs = 8000 } = {}) {
+async function waitForDomStable(tabId, { stableMs = 600, maxMs = 8000, frameId = 0 } = {}) {
   const deadline = Date.now() + maxMs;
 
   // 탭 status 변화 감지 (전통적인 페이지 이동)
@@ -512,12 +570,13 @@ async function waitForDomStable(tabId, { stableMs = 600, maxMs = 8000 } = {}) {
     let stableStart = 0;
 
     while (Date.now() < deadline) {
+      if (stopRequested) return 'stopped';
       await sleep(200);
       try {
-        const resp = await chrome.tabs.sendMessage(tabId, { type: 'PING' }).catch(() => null);
+        const resp = await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId }).catch(() => null);
         if (!resp?.alive) continue;
 
-        const domResp = await chrome.tabs.sendMessage(tabId, { type: 'INJECT_IDS' }).catch(() => null);
+        const domResp = await chrome.tabs.sendMessage(tabId, { type: 'INJECT_IDS' }, { frameId }).catch(() => null);
         const count = domResp?.count ?? -1;
 
         if (count !== prevCount) {
@@ -832,10 +891,13 @@ function showGhStatus(msg, type = 'info') {
 // ─── 설정 저장/로드 ──────────────────────────────────
 
 async function loadConfig() {
-  const result = await chrome.storage.local.get(['selectedProvider', 'providerConfigs']);
+  const result = await chrome.storage.local.get(['selectedProvider', 'providerConfigs', 'agentOptions']);
   if (result.selectedProvider) currentProvider = result.selectedProvider;
+  iframeOnlyMode = result.agentOptions?.iframeOnlyMode === true;
   renderProviderTabs();
   loadFieldValues(result.providerConfigs);
+  const iframeOnlyCheckbox = document.getElementById('iframeOnlyCheckbox');
+  if (iframeOnlyCheckbox) iframeOnlyCheckbox.checked = iframeOnlyMode;
 }
 
 function loadFieldValues(configs) {
@@ -858,8 +920,14 @@ async function saveProviderConfig() {
   document.querySelectorAll('[data-field-key]').forEach(el => {
     config[el.dataset.fieldKey] = el.value.trim();
   });
+  const iframeOnlyCheckbox = document.getElementById('iframeOnlyCheckbox');
+  iframeOnlyMode = iframeOnlyCheckbox?.checked === true;
   all[currentProvider] = config;
-  await chrome.storage.local.set({ providerConfigs: all, selectedProvider: currentProvider });
+  await chrome.storage.local.set({
+    providerConfigs: all,
+    selectedProvider: currentProvider,
+    agentOptions: { iframeOnlyMode },
+  });
 
   const status = document.getElementById('saveStatus');
   status.textContent = t.saveOk;
@@ -873,6 +941,24 @@ function getCurrentConfig() {
     config[el.dataset.fieldKey] = el.value.trim();
   });
   return config;
+}
+
+function isIframeOnlyModeEnabled() {
+  const iframeOnlyCheckbox = document.getElementById('iframeOnlyCheckbox');
+  if (iframeOnlyCheckbox) return iframeOnlyCheckbox.checked === true;
+  return iframeOnlyMode;
+}
+
+async function onIframeOnlyModeChange(e) {
+  iframeOnlyMode = e.target.checked === true;
+  const result = await chrome.storage.local.get('agentOptions');
+  const prev = result.agentOptions || {};
+  await chrome.storage.local.set({
+    agentOptions: {
+      ...prev,
+      iframeOnlyMode,
+    },
+  });
 }
 
 // ─── 탭 정보 ─────────────────────────────────────────
@@ -941,9 +1027,11 @@ function setRunning(running) {
   const btn = document.getElementById('runBtn');
   const dot = document.getElementById('statusDot');
   const statusText = document.getElementById('statusText');
+  const stopBtn = document.getElementById('stopBtn');
   if (running) {
     btn.disabled = true;
     btn.innerHTML = `<div class="spinner"></div> ${t.btnRunning}`;
+    stopBtn.hidden = false;
     dot.className = 'status-indicator running';
     statusText.textContent = 'running';
     document.body.classList.add('agent-running');
@@ -952,9 +1040,17 @@ function setRunning(running) {
   } else {
     btn.disabled = false;
     btn.innerHTML = t.btnAgentRun;
+    stopBtn.hidden = true;
     statusText.textContent = '';
     document.body.classList.remove('agent-running');
   }
+}
+
+function requestStopAgent() {
+  if (!isRunning || stopRequested) return;
+  const { t } = globalThis.i18n;
+  stopRequested = true;
+  appendLog(`<div class="log-warn">${t.infoStopRequested}</div>`);
 }
 
 // ─── 프롬프트 ────────────────────────────────────────
@@ -1050,6 +1146,10 @@ URL: ${state.url}
 Title: ${state.title}
 Body: ${state.visibleText.slice(0, 600)}
 
+[FRAME CONTEXT]
+Scope: ${state.isIframe ? 'iframe-only' : 'top-document'}
+Frame URL: ${state.frameUrl || state.url}
+
 [PAGE FIELD VALUES — label/key: "actual value" pairs extracted from the page]
 ${fieldValuesText}
 
@@ -1069,6 +1169,11 @@ ${histText}
 - After search/filter triggers AJAX reload, use wait(2000) before re-reading DOM
 - [jqgrid-checkbox checked=false/true] = checkbox in a jqGrid row; click it to select/deselect that row
 - To check a jqGrid row checkbox: click the [jqgrid-checkbox] element whose row text matches the target row
+
+[CHECKBOX RULES]
+- If the scenario says "checkbox" or "체크박스", prefer <input:checkbox> elements first
+- For checkbox scenarios, do NOT click <a> links unless the scenario explicitly asks to open/click a link
+- When multiple checkboxes exist in a table, match by the row text/name closest to the checkbox
 
 [jsTree RULES]
 - [tree-toggle-btn] = toggle button to expand/collapse a node → use click
@@ -1200,7 +1305,7 @@ async function runStep(t, tabId, config, scenario, history, step, providerLabel)
 
   let domResp;
   try {
-    domResp = await sendToTab(tabId, { type: 'GET_DOM' });
+    domResp = await fetchStepDomState(t, tabId);
   } catch (e) {
     removeThinking();
     appendLog(`<div class="log-error">${t.errDomFail(e.message)}</div>`);
@@ -1209,11 +1314,14 @@ async function runStep(t, tabId, config, scenario, history, step, providerLabel)
 
   if (!domResp?.success) {
     removeThinking();
-    appendLog(`<div class="log-error">${t.errDomResp}</div>`);
+    appendLog(`<div class="log-error">${domResp?.error || t.errDomResp}</div>`);
     return null;
   }
 
   const state = domResp.data;
+  if (state.isIframe) {
+    appendLog(`<div class="log-info">${t.infoIframeTarget((state.frameUrl || '').slice(0, 70), state.elementCount || 0)}</div>`);
+  }
   await updateTabInfo();
 
   // 직전 액션 실행 후 URL이 바뀌었으면 urlAfter를 업데이트한다.
@@ -1244,31 +1352,47 @@ async function runStep(t, tabId, config, scenario, history, step, providerLabel)
   return { state, parsed: result };
 }
 
+async function fetchStepDomState(t, tabId) {
+  if (isIframeOnlyModeEnabled()) {
+    return readBestIframeDomState(t, tabId);
+  }
+
+  const domResp = await sendToTarget(tabId, { type: 'GET_DOM' }, 0);
+  if (domResp?.success && domResp.data) {
+    domResp.data.frameId = 0;
+    domResp.data.frameUrl = domResp.data.url;
+    domResp.data.isIframe = false;
+  }
+  return domResp;
+}
+
 // ─── 단일 스텝 액션 실행 ─────────────────────────────
 
-async function executeStep(t, tabId, a) {
+async function executeStep(t, tabId, a, frameId = 0) {
   try {
     if (a.type === 'click') {
-      await sendToTab(tabId, { type: 'HIGHLIGHT', elementId: a.elementId });
-      await sleep(350);
-      const r = await sendToTab(tabId, { type: 'EXECUTE', action: a });
+      await sendToTarget(tabId, { type: 'HIGHLIGHT', elementId: a.elementId }, frameId);
+      await sleepWithStop(350);
+      if (stopRequested) return;
+      const r = await sendToTarget(tabId, { type: 'EXECUTE', action: a }, frameId);
       if (!r?.success) appendLog(`<div class="log-warn">${t.warnClickFail(r?.error)}</div>`);
       // 고정 sleep 대신 DOM 안정화까지 대기 — 페이지 로딩이 느린 경우 다음 스텝 오동작 방지
-      await waitForDomStable(tabId);
+      await waitForDomStable(tabId, { frameId });
     } else if (a.type === 'fill') {
-      await sendToTab(tabId, { type: 'HIGHLIGHT', elementId: a.elementId });
-      await sleep(250);
-      const r = await sendToTab(tabId, { type: 'EXECUTE', action: a });
+      await sendToTarget(tabId, { type: 'HIGHLIGHT', elementId: a.elementId }, frameId);
+      await sleepWithStop(250);
+      if (stopRequested) return;
+      const r = await sendToTarget(tabId, { type: 'EXECUTE', action: a }, frameId);
       if (!r?.success) appendLog(`<div class="log-warn">${t.warnFillFail(r?.error)}</div>`);
-      await sleep(400);
+      await sleepWithStop(400);
     } else if (a.type === 'navigate') {
       appendLog(`<div class="log-info">${t.infoNavigate(a.url)}</div>`);
       await chrome.tabs.update(tabId, { url: a.url });
       await waitForTabLoad(tabId);
-      await sleep(500);
+      await sleepWithStop(500);
     } else if (a.type === 'wait') {
       appendLog(`<div class="log-info">${t.infoWait(a.ms)}</div>`);
-      await sleep(a.ms || 2000);
+      await sleepWithStop(a.ms || 2000);
     }
   } catch (e) {
     appendLog(`<div class="log-warn">${t.warnActionErr(e.message)}</div>`);
@@ -1320,14 +1444,18 @@ async function runAgentLoop(t, tabId, config, scenario, providerLabel) {
   const MAX_STEPS = 20;
 
   for (let step = 1; step <= MAX_STEPS; step++) {
+    if (stopRequested) break;
+
     const result = await runStep(t, tabId, config, scenario, history, step, providerLabel);
     if (!result) break;
+
+    if (stopRequested) break;
 
     const { state, parsed } = result;
     const a = parsed.action;
 
     appendStepLog(step, a, parsed.thinking, providerLabel, state.elements);
-    history.push({ step, thinking: parsed.thinking, action: a, url: state.url, urlAfter: null });
+    history.push({ step, thinking: parsed.thinking, action: a, url: state.url, urlAfter: null, frameId: state.frameId ?? 0 });
 
     if (detectDuplicate(t, history, a, step, providerLabel)) break;
 
@@ -1336,7 +1464,7 @@ async function runAgentLoop(t, tabId, config, scenario, providerLabel) {
       break;
     }
 
-    await executeStep(t, tabId, a);
+    await executeStep(t, tabId, a, state.frameId ?? 0);
   }
 }
 
@@ -1345,6 +1473,7 @@ async function runAgentLoop(t, tabId, config, scenario, providerLabel) {
 async function startAgent() {
   if (isRunning) return;
   const { t } = globalThis.i18n;
+  stopRequested = false;
 
   switchTab('log');
 
@@ -1382,4 +1511,13 @@ async function startAgent() {
   }
 
   setRunning(false);
+}
+
+async function sleepWithStop(ms) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (stopRequested) return;
+    const remain = end - Date.now();
+    await sleep(Math.min(remain, 120));
+  }
 }

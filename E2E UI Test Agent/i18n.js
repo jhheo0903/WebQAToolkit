@@ -7,6 +7,7 @@ const MESSAGES = {
     settingsTitle:        'AI 모델 설정',
     // 설정 오버레이
     settingsLabel:        'AI Model',
+    iframeOnlyMode:       'iframe DOM만 대상으로 실행',
     btnSave:              '저장',
     saveOk:               '✓ 저장 완료',
     // 탭
@@ -26,6 +27,7 @@ const MESSAGES = {
     scenarioPlaceholder:  '시나리오를 선택하거나 직접 입력하세요 (Ctrl+Enter 실행)',
     btnAgentRun:          '▶ 에이전트 실행',
     btnRunning:           '실행 중...',
+    btnStop:              '■ 중지',
     // 로그 탭
     logLabel:             '실행 로그',
     btnClear:             '지우기',
@@ -78,6 +80,9 @@ const MESSAGES = {
     infoNavigate:         (url) => `🌐 이동: ${url}`,
     infoWait:             (ms) => `⏳ ${ms}ms 대기...`,
     infoThinking:         (step) => `STEP ${step} — AI 분석 중...`,
+    infoStopRequested:    '⏹ 사용자 요청으로 중지 중... (현재 단계 종료 후 멈춥니다)',
+    infoIframeTarget:     (url, count) => `🧩 iframe 모드: ${url} · 요소 ${count}개`,
+    errIframeNoDom:       '❌ iframe DOM을 찾지 못했습니다. 설정을 끄거나 iframe이 로드될 때까지 기다려주세요.',
     // 결과 카드
     resultPass:           '✓ PASS',
     resultFail:           '✗ FAIL',
@@ -91,6 +96,7 @@ const MESSAGES = {
     settingsTitle:        'AI Model Settings',
     // Settings overlay
     settingsLabel:        'AI Model',
+    iframeOnlyMode:       'Run on iframe DOM only',
     btnSave:              'Save',
     saveOk:               '✓ Saved',
     // Tabs
@@ -110,6 +116,7 @@ const MESSAGES = {
     scenarioPlaceholder:  'Select a scenario or type one (Ctrl+Enter to run)',
     btnAgentRun:          '▶ Run Agent',
     btnRunning:           'Running...',
+    btnStop:              '■ Stop',
     // Log tab
     logLabel:             'Run Log',
     btnClear:             'Clear',
@@ -162,6 +169,9 @@ const MESSAGES = {
     infoNavigate:         (url) => `🌐 Navigate: ${url}`,
     infoWait:             (ms) => `⏳ Waiting ${ms}ms...`,
     infoThinking:         (step) => `STEP ${step} — AI analyzing...`,
+    infoStopRequested:    '⏹ Stop requested by user... (will stop after current step)',
+    infoIframeTarget:     (url, count) => `🧩 iframe mode: ${url} · ${count} elements`,
+    errIframeNoDom:       '❌ Could not find a usable iframe DOM. Disable iframe mode or wait until iframe content loads.',
     // Result card
     resultPass:           '✓ PASS',
     resultFail:           '✗ FAIL',

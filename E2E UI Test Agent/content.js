@@ -56,6 +56,7 @@
       'button:not([disabled])',
       'a[href]',
       'input:not([disabled]):not([type="hidden"])',
+      'label[for]',
       'select:not([disabled])',
       'textarea:not([disabled])',
       '[role="button"]:not([disabled])',
@@ -139,8 +140,33 @@
     return `[treenode${selectedSuffix}-${state}] ${nodeText}`;
   }
 
+  function getCheckboxContextText(el) {
+    const row = el.closest('tr');
+    if (!row) return '[checkbox]';
+
+    const rowName = row.dataset.name ||
+      row.querySelector('.name')?.textContent?.trim() || '';
+    const rowSummary = getTableRowText(row);
+    const label = rowName || rowSummary;
+    return label ? `[checkbox] ${label}` : '[checkbox]';
+  }
+
+  function getCheckboxInputFromLabel(el) {
+    if (!el || el.tagName?.toLowerCase() !== 'label') return null;
+    const targetId = el.getAttribute('for');
+    if (!targetId) return null;
+    const target = document.getElementById(targetId);
+    if (target?.tagName?.toLowerCase() !== 'input' || target.type !== 'checkbox') return null;
+    return target;
+  }
+
   function getElementText(el, tag, cls) {
     if (tag === 'tr')                             return getTableRowText(el);
+    if (tag === 'input' && el.type === 'checkbox') return getCheckboxContextText(el);
+    if (tag === 'label') {
+      const checkbox = getCheckboxInputFromLabel(el);
+      if (checkbox) return getCheckboxContextText(checkbox);
+    }
     if (tag === 'i' && cls.includes('jstree-ocl')) return getJsTreeToggleText(el);
     if (tag === 'a' && cls.includes('jstree-anchor')) return getJsTreeNodeText(el);
     return (el.textContent || el.innerText || '').trim().replaceAll(/\s+/g, ' ').slice(0, 80);
@@ -170,7 +196,7 @@
         isTableRow:   tag === 'tr',
         isJsTreeToggle: tag === 'i' && cls.includes('jstree-ocl'),
         isJsTreeNode:   tag === 'a' && cls.includes('jstree-anchor'),
-        isJqGridCheckbox: tag === 'input' && el.type === 'checkbox' && !!el.closest('tr.jqgrow'),
+        isJqGridCheckbox: isJqGridCheckboxElement(el),
       };
     });
 
@@ -254,6 +280,12 @@
     }
   }
 
+    function isJqGridCheckboxElement(el) {
+      if (!el || el.tagName?.toLowerCase() !== 'input' || el.type !== 'checkbox') return false;
+      if (!el.closest('tr.jqgrow')) return false;
+      return !!el.closest('.ui-jqgrid');
+    }
+
   // jqGrid 체크박스 셀 클릭 — 체크박스 input에 직접 click을 전달한다
   function clickJqGridCheckbox(el) {
     // el은 체크박스 input 자체
@@ -309,8 +341,8 @@
     if (tag === 'tr')                                 return clickJqGridRow(el);
     if (tag === 'i' && cls.includes('jstree-ocl'))   return clickJsTreeToggle(el);
     if (tag === 'a' && cls.includes('jstree-anchor')) return clickJsTreeNode(el);
-    // jqGrid 체크박스: tr.jqgrow 안의 input[type=checkbox]
-    if (tag === 'input' && el.type === 'checkbox' && el.closest('tr.jqgrow'))
+    // jqGrid 체크박스: 실제 jqGrid 컨텍스트의 체크박스만 특수 처리
+    if (isJqGridCheckboxElement(el))
       return clickJqGridCheckbox(el);
 
     // <a> 태그: el.click()은 페이지 핸들러 내부에서 javascript: URL을 실행하려 할 때

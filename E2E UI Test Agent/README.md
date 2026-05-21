@@ -14,7 +14,7 @@ An AI agent interprets natural language scenarios and directly controls your bro
 - **Works on any website** — no per-site configuration needed
 - **Multi-AI provider support** — Claude, OpenAI, Azure OpenAI, Ollama, or GitHub Copilot
 - **Real-time visual feedback** — watch every step as it executes
-- **Handles complex UI** — jqGrid tables, jsTree nodes, dropdowns, collapsibles, card elements, React/Vue forms
+- **Handles complex UI** — jqGrid, Tables, jsTree nodes, dropdowns, collapsibles, card elements, React/Vue forms
 - **Token usage display** — input and output token counts shown per step in the run log
 - **Bilingual UI** — Korean and English (auto-detected)
 
