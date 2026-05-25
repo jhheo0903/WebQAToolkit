@@ -1,4 +1,4 @@
-# ApplicationTestTool
+# Web QA Toolkit
 
 > A collection of tools for testing web applications.
 
