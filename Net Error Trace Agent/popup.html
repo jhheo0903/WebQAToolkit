@@ -9,8 +9,10 @@
         --bg-a: #f8fafc;
         --bg-b: #f8fafc;
         --panel: #ffffff;
+        --surface2: #eef2f7;
         --text: #1f2937;
         --muted: #64748b;
+        --text3: #4e566a;
         --line: #d1d5db;
         --line-strong: #94a3b8;
         --warning-bg: #fffbeb;
@@ -19,17 +21,19 @@
         --error-bg: #fef2f2;
         --error-line: #ef4444;
         --error-text: #991b1b;
-        --accent: #2563eb;
-        --accent-strong: #1d4ed8;
-        --shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+        --accent: #6366f1;
+        --accent-strong: #818cf8;
+        --shadow: 0 10px 20px rgba(0, 0, 0, 0.35);
       }
 
       :root[data-theme="dark"] {
         --bg-a: #0d0f14;
         --bg-b: #0d0f14;
         --panel: #13161e;
+        --surface2: #1a1e28;
         --text: #dde3f0;
         --muted: #8891a8;
+        --text3: #4e566a;
         --line: #252a38;
         --line-strong: #2e3448;
         --warning-bg: rgba(251, 191, 36, 0.08);
@@ -66,12 +70,122 @@
 
       .toolbar {
         display: flex;
-        justify-content: flex-end;
+        position: relative;
+        justify-content: space-between;
         align-items: center;
         gap: 8px;
-        padding: 12px 12px 10px;
+        padding: 0 12px;
+        height: 44px;
         border-bottom: 1px solid var(--line);
         flex-shrink: 0;
+        background: var(--panel);
+      }
+
+      .logo-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent-strong);
+        flex-shrink: 0;
+      }
+
+      .header-site {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 11px;
+        color: var(--text3);
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      .header-status {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 10px;
+        color: var(--text3);
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        flex-shrink: 0;
+        margin-left: auto;
+      }
+
+      .status-indicator {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--line-strong);
+      }
+
+      .actionBar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+        flex-shrink: 0;
+      }
+
+      .actionBarSpacer {
+        flex: 1;
+      }
+
+      .actionLabel {
+        font-size: 10px;
+        color: var(--muted);
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      .actionBtn {
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 11px;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      .actionBtnPrimary {
+        border-color: rgba(99, 102, 241, 0.25);
+        color: var(--accent-strong);
+        background: rgba(99, 102, 241, 0.08);
+      }
+
+      .toolbarTitle {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .toolbarTitleMain {
+        font-size: 12px;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-weight: 600;
+        color: var(--accent-strong);
+        letter-spacing: -0.02em;
+      }
+
+      .toolbarTitleSub {
+        font-size: 10px;
+        color: var(--muted);
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      .toolbarActions {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .toolbarHint {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 11px;
+        color: #4e566a;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
       }
 
       button {
@@ -100,6 +214,231 @@
       :root[data-theme="dark"] button:hover {
         background: #273449;
         box-shadow: 0 5px 12px rgba(2, 6, 23, 0.45);
+      }
+
+      .iconButton {
+        width: 33px;
+        min-width: 33px;
+        height: 33px;
+        padding: 0;
+        font-size: 15px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .iconButton.active {
+        border-color: var(--accent);
+        color: var(--accent-strong);
+      }
+
+      .settingsOverlay {
+        display: none;
+        position: absolute;
+        top: 44px;
+        left: 0;
+        right: 0;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+        padding: 10px 12px 12px;
+        gap: 9px;
+        z-index: 100;
+        opacity: 0;
+        transform: translateY(-8px);
+        pointer-events: none;
+        transition: opacity 0.2s ease, transform 0.2s ease;
+      }
+
+      .settingsOverlay.open {
+        display: grid;
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+      }
+
+      .settings-inner {
+        padding: 14px;
+      }
+
+      .settingsTitle {
+        font-size: 10px;
+        font-weight: 600;
+        color: #4e566a;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      .settingsHead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .settingsClose {
+        border-radius: 8px;
+        padding: 5px 8px;
+        font-size: 11px;
+      }
+
+      .providerTabs,
+      .provider-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .providerTab,
+      .provider-tab {
+        background: var(--surface2);
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        padding: 4px 10px;
+        font-size: 11px;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-weight: 500;
+        color: var(--muted);
+      }
+
+      .providerTab.active,
+      .provider-tab.active {
+        border-color: rgba(99, 102, 241, 0.25);
+        color: var(--accent-strong);
+        background: rgba(99, 102, 241, 0.08);
+      }
+
+      .providerTab:hover,
+      .provider-tab:hover {
+        border-color: var(--accent-strong);
+      }
+
+      .fieldRow,
+      .field-row {
+        display: grid;
+        grid-template-columns: 82px 1fr;
+        align-items: center;
+        margin: 5px 0 5px 0;
+      }
+
+      .fieldLabel,
+      .field-label {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .fieldInput,
+      .fieldSelect,
+      .field-input,
+      .field-select {
+        border: 1px solid var(--line-strong);
+        border-radius: 4px;
+        padding: 6px 8px;
+        font-size: 11px;
+        color: var(--text);
+        background: var(--surface2);
+        outline: none;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      :root[data-theme="dark"] .fieldInput,
+      :root[data-theme="dark"] .fieldSelect,
+      :root[data-theme="dark"] .field-input,
+      :root[data-theme="dark"] .field-select {
+        background: #1a1e28;
+      }
+
+      .settingsFooter {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .ghAuthWrap {
+        border: 1px dashed var(--line-strong);
+        border-radius: 8px;
+        padding: 8px;
+        display: grid;
+        margin: 5px 0 5px 0;
+      }
+
+      .ghStatus {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .ghStatus.error {
+        color: #dc2626;
+      }
+
+      .ghStatus.ok {
+        color: #16a34a;
+        font-weight: 700;
+      }
+
+      .ghCode {
+        font-size: 19px;
+        letter-spacing: 0.13em;
+        font-weight: 700;
+        color: var(--accent-strong);
+      }
+
+      .ghActionsRow {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .ghButton {
+        border-radius: 4px;
+        padding: 6px 9px;
+        font-size: 11px;
+        font-weight: 700;
+        background: var(--accent);
+        color: #ffffff;
+        border: 1px solid var(--accent-strong);
+      }
+
+      .ghButton:hover {
+        background: var(--accent-strong);
+        color: #ffffff;
+        border-color: var(--accent-strong);
+      }
+
+      .ghButton.ghost {
+        background: var(--panel);
+        color: var(--text);
+        border-color: var(--line-strong);
+      }
+
+      .ghButton.ghost:hover {
+        background: var(--surface2);
+        color: var(--text);
+        border-color: var(--line-strong);
+      }
+
+      .ghAuthWrap .ghButton[data-gh-action="login"] {
+        margin-top: 8px;
+      }
+
+      .ghHelp {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .saveStatus {
+        margin-right: auto;
+        font-size: 10px;
+        color: var(--muted);
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      .saveStatus.ok {
+        color: #16a34a;
+      }
+
+      .saveStatus.err {
+        color: #dc2626;
       }
 
       .list {
@@ -144,7 +483,7 @@
 
       .composer {
         border: 1px solid var(--line-strong);
-        border-radius: 14px;
+        border-radius: 8px;
         display: flex;
         align-items: flex-end;
         gap: 8px;
@@ -185,7 +524,7 @@
 
       .promptButton {
         border: none;
-        border-radius: 10px;
+        border-radius: 6px;
         width: 30px;
         min-width: 30px;
         height: 30px;
@@ -358,8 +697,29 @@
         font-size: 11px;
         color: var(--muted);
         padding: 0 12px 8px;
+        margin-top: 8px;
         border-bottom: 1px solid var(--line);
         flex-shrink: 0;
+      }
+
+      .aiInfo {
+        display: none;
+        margin: 8px 12px 0;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #ffffff;
+        padding: 9px 10px;
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+      }
+
+      .aiInfo.show {
+        display: block;
+      }
+
+      :root[data-theme="dark"] .aiInfo {
+        background: #1a1e28;
       }
 
       @keyframes card-in {
@@ -376,26 +736,51 @@
   </head>
   <body>
     <div class="app">
-      <div id="toolbar" class="toolbar">
-        <button id="themeToggleButton" type="button" aria-label="Toggle dark mode">Dark</button>
-        <button id="refreshButton" type="button">Refresh</button>
-        <button id="clearButton" type="button">Clear All</button>
+      <div id="toolbar" class="toolbar header">
+        <div class="toolbarTitle logo">
+          <span class="toolbarTitleMain">Net Error Agent</span>
+        </div>
+        <div class="header-status">
+          <span class="status-indicator"></span>
+          <span id="statusText">ready</span>
+        </div>
+        <button id="settingsButton" class="iconButton btn-settings" type="button" aria-label="AI settings">⚙</button>
       </div>
+      <div class="actionBar">
+        <span class="actionLabel">Panel Controls</span>
+        <span class="actionBarSpacer"></span>
+        <button id="themeToggleButton" class="actionBtn" type="button" aria-label="Toggle dark mode">Dark</button>
+        <button id="refreshButton" class="actionBtn" type="button">Refresh</button>
+        <button id="clearButton" class="actionBtn" type="button">Clear All</button>
+      </div>
+      <section id="settingsOverlay" class="settingsOverlay settings-overlay" aria-label="AI settings panel">
+        <div class="settings-inner">
+          <div class="settingsTitle settings-title">AI Settings</div>
+          <div id="providerTabs" class="providerTabs provider-tabs"></div>
+          <div id="providerFields" class="providerFields fields"></div>
+          <div class="settingsFooter settings-footer">
+            <span id="saveStatus" class="saveStatus save-status"></span>
+            <button id="saveSettingsButton" class="actionBtn actionBtnPrimary" type="button">Save</button>
+          </div>
+        </div>
+      </section>
       <div id="filterInfo" class="filterInfo">Current tab logs</div>
+      <div id="aiInfo" class="aiInfo"></div>
       <div id="list" class="list"></div>
       <div id="promptDock" class="promptDock">
-        <div class="composerHint">Type to filter logs. Enter to apply, Shift+Enter for newline.</div>
+        <div class="composerHint">Prompt to AI for log analysis/filtering. Enter to run, Shift+Enter for newline.</div>
         <div class="composer">
           <textarea
             id="promptInput"
             class="promptInput"
             rows="4"
-            placeholder="Filter by URL, method, status, response body"
+            placeholder="e.g. Find likely root cause of repeated 500 errors on payment API"
           ></textarea>
-          <button id="promptSendButton" class="promptButton" type="button" aria-label="Apply filter">↑</button>
+          <button id="promptSendButton" class="promptButton" type="button" aria-label="Run AI prompt">↑</button>
         </div>
       </div>
     </div>
+    <script src="providers.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>
