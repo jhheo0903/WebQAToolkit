@@ -16,6 +16,7 @@ const saveSettingsButton = document.getElementById("saveSettingsButton");
 const saveStatus = document.getElementById("saveStatus");
 const aiInfo = document.getElementById("aiInfo");
 const GITHUB_AUTH_KEY = "githubCopilotAuth";
+const CAPTURE_PORT_NAME = "net-error-capture-session";
 
 let filterQuery = "";
 const expandedIds = new Set();
@@ -25,6 +26,36 @@ let currentProvider = "openai";
 let providerConfigs = {};
 let aiRunning = false;
 let copilotDeviceFlowState = null;
+let captureSessionPort = null;
+
+function startCaptureSession() {
+  if (captureSessionPort) {
+    return;
+  }
+
+  try {
+    captureSessionPort = chrome.runtime.connect({ name: CAPTURE_PORT_NAME });
+    captureSessionPort.onDisconnect.addListener(() => {
+      captureSessionPort = null;
+    });
+  } catch {
+    captureSessionPort = null;
+  }
+}
+
+function stopCaptureSession() {
+  if (!captureSessionPort) {
+    return;
+  }
+
+  try {
+    captureSessionPort.disconnect();
+  } catch {
+    // Ignore teardown errors during panel close/navigation.
+  }
+
+  captureSessionPort = null;
+}
 
 function escapeHtml(value) {
   return String(value)
@@ -939,9 +970,14 @@ promptInput.addEventListener("keydown", (event) => {
 });
 
 initializeTheme();
+startCaptureSession();
 loadAiConfig().finally(() => {
   render();
 });
 autoResizePrompt();
 updatePromptButtonState();
 setInterval(render, 2000);
+
+window.addEventListener("beforeunload", () => {
+  stopCaptureSession();
+});

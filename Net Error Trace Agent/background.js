@@ -1,5 +1,8 @@
 const STORAGE_KEY = "capturedErrors";
 const MAX_CAPTURED_ITEMS = 100;
+const CAPTURE_PORT_NAME = "net-error-capture-session";
+
+let activeCaptureSessions = 0;
 
 chrome.runtime.onInstalled.addListener(async () => {
   const stored = await chrome.storage.local.get(STORAGE_KEY);
@@ -24,6 +27,18 @@ chrome.action.onClicked.addListener(async (tab) => {
   } catch (error) {
     // Some pages (for example, chrome://) do not allow extension side panel access.
   }
+});
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== CAPTURE_PORT_NAME) {
+    return;
+  }
+
+  activeCaptureSessions += 1;
+
+  port.onDisconnect.addListener(() => {
+    activeCaptureSessions = Math.max(0, activeCaptureSessions - 1);
+  });
 });
 
 function getHeaderValue(headers, headerName) {
@@ -111,6 +126,10 @@ async function storeCapture(capture) {
 
 chrome.webRequest.onCompleted.addListener(
   async (details) => {
+    if (activeCaptureSessions <= 0) {
+      return;
+    }
+
     if (isScriptOrStylesheetRequest(details)) {
       return;
     }
