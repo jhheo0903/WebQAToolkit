@@ -325,6 +325,16 @@ body {
 .tab-pane { display: none; flex: 1; flex-direction: column; min-height: 0; }
 .tab-pane.active { display: flex; }
 
+/* 로그 영역이 부모 flex에서 잘리지 않도록 명시적으로 축소 허용 */
+#paneLog,
+#paneScenario {
+  min-height: 0;
+}
+#paneLog {
+  height: 100%;
+  overflow: hidden;
+}
+
 /* ── splitter 핸들 ── */
 .split-handle {
   height: 6px;
@@ -486,9 +496,33 @@ body.agent-running .scenario-item { cursor: default; }
 
 /* ── 로그 탭 ── */
 .log-pane {
-  flex: 1; overflow-y: auto;
+  flex: 1;
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  overflow-y: scroll;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 10px 12px;
   display: flex; flex-direction: column; gap: 5px;
+}
+.log-pane > * {
+  flex: 0 0 auto;
+}
+.log-pane::-webkit-scrollbar {
+  width: 10px;
+}
+.log-pane::-webkit-scrollbar-track {
+  background: var(--surface2);
+}
+.log-pane::-webkit-scrollbar-thumb {
+  background: var(--border2);
+  border-radius: 8px;
+  border: 2px solid var(--surface2);
+}
+.log-pane::-webkit-scrollbar-thumb:hover {
+  background: var(--accentbd);
 }
 .log-empty {
   display: flex; flex-direction: column; align-items: center;
@@ -678,6 +712,23 @@ body.agent-running .scenario-item { cursor: default; }
   color: var(--text3);
   cursor: not-allowed;
 }
+.run-actions {
+  display: flex;
+  gap: 8px;
+}
+.run-actions .run-btn {
+  width: auto;
+  flex: 1;
+}
+.run-btn-secondary {
+  background: var(--surface3);
+  border: 1px solid var(--border2);
+  color: var(--text);
+}
+.run-btn-secondary:hover:not(:disabled) {
+  background: var(--surface2);
+  border-color: var(--accentbd);
+}
 .stop-btn {
   width: 100%;
   padding: 8px;
@@ -856,7 +907,10 @@ body.agent-running .scenario-item { cursor: default; }
     <textarea class="run-textarea" id="scenarioInput" rows="4"
       data-i18n-placeholder="scenarioPlaceholder"
       placeholder="Select a scenario or type one (Ctrl+Enter to run)"></textarea>
-    <button class="run-btn" id="runBtn" data-i18n="btnAgentRun">▶ Run Agent</button>
+    <div class="run-actions">
+      <button class="run-btn" id="runBtn" data-i18n="btnAgentRun">▶ Run Agent</button>
+      <button class="run-btn run-btn-secondary" id="runAllBtn" data-i18n="btnRunAll">▶ Run All</button>
+    </div>
     <button class="stop-btn" id="stopBtn" data-i18n="btnStop" hidden>■ 중지</button>
   </div>
 

@@ -26,6 +26,8 @@ const MESSAGES = {
     // 실행 도크
     scenarioPlaceholder:  '시나리오를 선택하거나 직접 입력하세요 (Ctrl+Enter 실행)',
     btnAgentRun:          '▶ 에이전트 실행',
+    btnRunAll:            '▶ 전체 실행',
+    btnRunningAll:        '전체 실행 중...',
     btnRunning:           '실행 중...',
     btnStop:              '■ 중지',
     // 로그 탭
@@ -41,6 +43,8 @@ const MESSAGES = {
     fileReadFail:         '파일을 읽을 수 없습니다',
     // 에러/경고 메시지
     warnNoScenario:       '⚠ 시나리오를 선택하거나 직접 입력해주세요',
+    warnNoScenariosLoaded:'⚠ 먼저 시나리오 JSON을 불러와주세요',
+    warnScenarioSkipped:  (id) => `⚠ ${id} 시나리오가 비어 있어 건너뜁니다`,
     errProviders:         '❌ providers.js 로드 실패. 익스텐션을 새로고침해주세요.',
     errApiKeyClaude:      '❌ ⚙ 설정에서 API 키를 입력하고 저장해주세요',
     errApiKeyAzure:       '❌ Azure: API Key, Endpoint, Deployment 모두 필요합니다',
@@ -76,6 +80,10 @@ const MESSAGES = {
     warnActionErr:        (msg) => `⚠ 액션 오류: ${msg}`,
     // 로그 정보
     infoStart:            (info, label, tabId) => `🚀 ${info}${label} · 탭: ${tabId}`,
+    infoBatchStart:       (n) => `🚀 전체 실행 시작: ${n}개 시나리오`,
+    infoBatchProgress:    (idx, total, id, title) => `▶ [${idx}/${total}] ${id} · ${title}`,
+    infoBatchDone:        (pass, fail, skip, total) => `전체 ${total}개 완료 · PASS ${pass} · FAIL ${fail} · SKIP ${skip}`,
+    infoBatchStopped:     (pass, fail, skip) => `⏹ 전체 실행 중지됨 · PASS ${pass} · FAIL ${fail} · SKIP ${skip}`,
     infoUrlChange:        (prev, next) => `🔀 URL 변경: ${prev} → ${next}`,
     infoNavigate:         (url) => `🌐 이동: ${url}`,
     infoWait:             (ms) => `⏳ ${ms}ms 대기...`,
@@ -115,6 +123,8 @@ const MESSAGES = {
     // Run dock
     scenarioPlaceholder:  'Select a scenario or type one (Ctrl+Enter to run)',
     btnAgentRun:          '▶ Run Agent',
+    btnRunAll:            '▶ Run All',
+    btnRunningAll:        'Running all...',
     btnRunning:           'Running...',
     btnStop:              '■ Stop',
     // Log tab
@@ -130,6 +140,8 @@ const MESSAGES = {
     fileReadFail:         'Cannot read the file',
     // Error/warning messages
     warnNoScenario:       '⚠ Please select or enter a scenario',
+    warnNoScenariosLoaded:'⚠ Please load a scenario JSON file first',
+    warnScenarioSkipped:  (id) => `⚠ Skipped ${id} because it has no scenario text`,
     errProviders:         '❌ Failed to load providers.js. Please reload the extension.',
     errApiKeyClaude:      '❌ ⚙ Please enter and save your API key in Settings',
     errApiKeyAzure:       '❌ Azure: API Key, Endpoint, and Deployment are all required',
@@ -165,6 +177,10 @@ const MESSAGES = {
     warnActionErr:        (msg) => `⚠ Action error: ${msg}`,
     // Log info
     infoStart:            (info, label, tabId) => `🚀 ${info}${label} · tab: ${tabId}`,
+    infoBatchStart:       (n) => `🚀 Batch run started: ${n} scenarios`,
+    infoBatchProgress:    (idx, total, id, title) => `▶ [${idx}/${total}] ${id} · ${title}`,
+    infoBatchDone:        (pass, fail, skip, total) => `Completed ${total} scenarios · PASS ${pass} · FAIL ${fail} · SKIP ${skip}`,
+    infoBatchStopped:     (pass, fail, skip) => `⏹ Batch stopped · PASS ${pass} · FAIL ${fail} · SKIP ${skip}`,
     infoUrlChange:        (prev, next) => `🔀 URL changed: ${prev} → ${next}`,
     infoNavigate:         (url) => `🌐 Navigate: ${url}`,
     infoWait:             (ms) => `⏳ Waiting ${ms}ms...`,

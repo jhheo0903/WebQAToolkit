@@ -8,6 +8,7 @@ let lastLoadedFileText = null; // 마지막으로 읽은 파일 내용 (새로�
 let fileHandle = null;        // FileSystemFileHandle — 파일 재읽기(새로고침)용
 let iframeOnlyMode = false;   // true면 서브 iframe DOM만 대상으로 동작
 let stopRequested = false;
+let isBatchRunning = false;
 
 // 시나리오 인덱스 → 'pass' | 'fail' 결과 보존 (파일 재로드 전까지 유지)
 const scenarioResults = new Map();
@@ -22,6 +23,7 @@ const scenarioResults = new Map();
 
   // ── 실행 버튼 ──
   document.getElementById('runBtn').addEventListener('click', startAgent);
+  document.getElementById('runAllBtn').addEventListener('click', startAllScenarios);
   document.getElementById('clearBtn').addEventListener('click', clearLog);
   document.getElementById('stopBtn').addEventListener('click', requestStopAgent);
 
@@ -63,6 +65,8 @@ const scenarioResults = new Map();
   chrome.tabs.onUpdated.addListener((id, info) => {
     if (info.status === 'complete') updateTabInfo();
   });
+
+  updateRunButtons();
 })();
 
 // ─── splitter (시나리오 목록 ↕ 실행 도크) ───────────
@@ -1021,6 +1025,19 @@ function removeThinking() { document.getElementById('thinkingNode')?.remove(); }
 let isRunning = false;
 let startTime = null;
 
+function updateRunButtons() {
+  const { t } = globalThis.i18n;
+  const runBtn = document.getElementById('runBtn');
+  const runAllBtn = document.getElementById('runAllBtn');
+
+  if (runBtn && !isRunning) runBtn.innerHTML = t.btnAgentRun;
+
+  if (runAllBtn) {
+    runAllBtn.disabled = isRunning || isBatchRunning;
+    runAllBtn.textContent = isBatchRunning ? t.btnRunningAll : t.btnRunAll;
+  }
+}
+
 function setRunning(running) {
   const { t } = globalThis.i18n;
   isRunning = running;
@@ -1044,6 +1061,13 @@ function setRunning(running) {
     statusText.textContent = '';
     document.body.classList.remove('agent-running');
   }
+
+  updateRunButtons();
+}
+
+function setBatchRunning(running) {
+  isBatchRunning = running;
+  updateRunButtons();
 }
 
 function requestStopAgent() {
@@ -1297,6 +1321,19 @@ function detectDuplicate(t, history, a, step, providerLabel) {
   return true;
 }
 
+function resolveStepTerminalStatus(t, history, a, step, providerLabel) {
+  if (detectDuplicate(t, history, a, step, providerLabel)) {
+    return 'fail';
+  }
+
+  if (a.type === 'done') {
+    appendResultCard(t, a.pass, a.reason, step, providerLabel);
+    return a.pass ? 'pass' : 'fail';
+  }
+
+  return null;
+}
+
 // ─── 단일 스텝 DOM 읽기 + AI 호출 ───────────────────
 
 async function runStep(t, tabId, config, scenario, history, step, providerLabel) {
@@ -1442,6 +1479,7 @@ function appendStepLog(step, a, thinking, providerLabel, elements) {
 async function runAgentLoop(t, tabId, config, scenario, providerLabel) {
   const history = [];
   const MAX_STEPS = 20;
+  let status = 'incomplete';
 
   for (let step = 1; step <= MAX_STEPS; step++) {
     if (stopRequested) break;
@@ -1457,34 +1495,39 @@ async function runAgentLoop(t, tabId, config, scenario, providerLabel) {
     appendStepLog(step, a, parsed.thinking, providerLabel, state.elements);
     history.push({ step, thinking: parsed.thinking, action: a, url: state.url, urlAfter: null, frameId: state.frameId ?? 0 });
 
-    if (detectDuplicate(t, history, a, step, providerLabel)) break;
-
-    if (a.type === 'done') {
-      appendResultCard(t, a.pass, a.reason, step, providerLabel);
+    const terminalStatus = resolveStepTerminalStatus(t, history, a, step, providerLabel);
+    if (terminalStatus) {
+      status = terminalStatus;
       break;
     }
 
     await executeStep(t, tabId, a, state.frameId ?? 0);
   }
+
+  if (stopRequested && status === 'incomplete') {
+    status = 'stopped';
+  }
+
+  return status;
 }
 
 // ─── 메인 에이전트 루프 ──────────────────────────────
 
-async function startAgent() {
-  if (isRunning) return;
+async function startAgent(options = {}) {
+  if (isRunning) return 'busy';
   const { t } = globalThis.i18n;
   stopRequested = false;
 
-  switchTab('log');
+  if (options.switchToLog !== false) switchTab('log');
 
-  const scenario = document.getElementById('scenarioInput').value.trim();
+  const scenario = (options.scenarioText ?? document.getElementById('scenarioInput').value).trim();
   if (!scenario) {
     appendLog(`<div class="log-warn">${t.warnNoScenario}</div>`);
-    return;
+    return 'incomplete';
   }
 
   const config = getCurrentConfig();
-  if (!await validateAgentConfig(t, config)) return;
+  if (!await validateAgentConfig(t, config)) return 'incomplete';
 
   const { PROVIDERS } = globalThis.AIProviders;
   const providerLabel = PROVIDERS[currentProvider]?.label || currentProvider;
@@ -1492,25 +1535,100 @@ async function startAgent() {
   const tabId = await getActiveTabId();
   if (!tabId) {
     appendLog(`<div class="log-error">${t.errNoTab}</div>`);
-    return;
+    return 'error';
   }
 
-  clearLog();
+  if (options.clearLog !== false) clearLog();
   setRunning(true);
 
-  const headerInfo = selectedScenario?.id
-    ? `${selectedScenario.id} · ${selectedScenario.title ?? ''} · `
+  const headerScenario = options.scenarioMeta ?? selectedScenario;
+  const headerInfo = headerScenario?.id
+    ? `${headerScenario.id} · ${headerScenario.title ?? ''} · `
     : '';
   appendLog(`<div class="log-info">${t.infoStart(headerInfo, providerLabel, tabId)}</div>`);
 
+  let status = 'incomplete';
   try {
-    await runAgentLoop(t, tabId, config, scenario, providerLabel);
+    status = await runAgentLoop(t, tabId, config, scenario, providerLabel);
   } catch (e) {
     removeThinking();
     appendLog(`<div class="log-error">${t.errFatal(e.message)}</div>`);
+    status = 'error';
   }
 
   setRunning(false);
+  return status;
+}
+
+async function startAllScenarios() {
+  if (isRunning || isBatchRunning) return;
+
+  const { t } = globalThis.i18n;
+  if (loadedScenarios.length === 0) {
+    appendLog(`<div class="log-warn">${t.warnNoScenariosLoaded}</div>`);
+    return;
+  }
+
+  switchTab('log');
+  clearLog();
+  stopRequested = false;
+  setBatchRunning(true);
+
+  let passCount = 0;
+  let failCount = 0;
+  let skipCount = 0;
+
+  appendLog(`<div class="log-info">${t.infoBatchStart(loadedScenarios.length)}</div>`);
+
+  try {
+    for (let idx = 0; idx < loadedScenarios.length; idx++) {
+      if (stopRequested) break;
+
+      const sc = loadedScenarios[idx];
+      const scenarioText = (sc.scenario || sc.description || sc.steps || '').trim();
+      const id = sc.id || `SC-${String(idx + 1).padStart(3, '0')}`;
+      const title = sc.title || sc.name || scenarioText.slice(0, 30) || `scenario ${idx + 1}`;
+
+      if (!scenarioText) {
+        skipCount++;
+        appendLog(`<div class="log-warn">${t.warnScenarioSkipped(id)}</div>`);
+        continue;
+      }
+
+      forceSelectScenario(idx);
+      appendLog(`<div class="log-info">${t.infoBatchProgress(idx + 1, loadedScenarios.length, id, title)}</div>`);
+
+      const status = await startAgent({
+        scenarioText,
+        scenarioMeta: sc,
+        clearLog: false,
+        switchToLog: false,
+      });
+
+      if (status === 'pass') {
+        passCount++;
+      } else if (status === 'stopped') {
+        break;
+      } else {
+        failCount++;
+      }
+    }
+
+    if (stopRequested) {
+      appendLog(`<div class="log-warn">${t.infoBatchStopped(passCount, failCount, skipCount)}</div>`);
+      return;
+    }
+
+    const cls = failCount === 0 ? 'pass' : 'fail';
+    const title = failCount === 0 ? t.resultPass : t.resultFail;
+    appendLog(`
+      <div class="result-card ${cls}">
+        <div class="result-title ${cls}">${title}</div>
+        <div class="result-reason ${cls}">${t.infoBatchDone(passCount, failCount, skipCount, loadedScenarios.length)}</div>
+      </div>`);
+  } finally {
+    setBatchRunning(false);
+  }
 }
 
 async function sleepWithStop(ms) {
