@@ -1084,8 +1084,8 @@ function requestStopAgent() {
 // 레이블 하나만 선택하고 나머지 중복 속성을 생략한다.
 // 기존 방식은 모든 속성을 나열해 엘리먼트 수가 많을수록 입력 토큰이 크게 늘었다.
 function serializeElement(el) {
-  // 우선순위: text > ariaLabel > placeholder > name > value
-  const label = el.text || el.ariaLabel || el.placeholder || el.name || el.value || '';
+  // 우선순위: text > ariaLabel > title > placeholder > name > value
+  const label = el.text || el.ariaLabel || el.title || el.placeholder || el.name || el.value || '';
 
   let line = `  [${el.id}] <${el.tag}${el.type ? ':' + el.type : ''}>`;
 
@@ -1095,7 +1095,7 @@ function serializeElement(el) {
   if (el.isJqGridCheckbox)  line += ` [jqgrid-checkbox checked=${el.checked}]`;
   else if (el.checked !== null) line += ` checked=${el.checked}`;
 
-  if (label)                line += ` "${label.slice(0, 40)}"`;
+  if (label)                line += ` "${label.slice(0, 120)}"`;
   // 현재 입력값은 레이블과 다를 때만 추가 (중복 방지)
   if (el.value && el.value !== label) line += ` =${el.value.slice(0, 30)}`;
   if (el.href && !el.href.startsWith('#')) line += ` →${el.href.slice(0, 40)}`;

@@ -147,7 +147,17 @@
     const rowName = row.dataset.name ||
       row.querySelector('.name')?.textContent?.trim() || '';
     const rowSummary = getTableRowText(row);
-    const label = rowName || rowSummary;
+    const hiddenTexts = Array.from(row.querySelectorAll('span.hidden'))
+      .map(node => (node.textContent || '').trim().replaceAll(/\s+/g, ' '))
+      .filter(Boolean);
+    const titleHints = Array.from(row.querySelectorAll('[title]'))
+      .map(node => (node.getAttribute('title') || '').trim().replaceAll(/\s+/g, ' '))
+      .filter(Boolean);
+
+    const labelParts = [rowName, rowSummary, ...hiddenTexts, ...titleHints]
+      .filter(Boolean)
+      .filter((text, idx, arr) => arr.indexOf(text) === idx);
+    const label = labelParts.join(' | ');
     return label ? `[checkbox] ${label}` : '[checkbox]';
   }
 
@@ -163,6 +173,9 @@
   function getElementText(el, tag, cls) {
     if (tag === 'tr')                             return getTableRowText(el);
     if (tag === 'input' && el.type === 'checkbox') return getCheckboxContextText(el);
+    if (tag === 'textarea') {
+      return (el.value || el.textContent || '').trim().replaceAll(/\s+/g, ' ').slice(0, 160);
+    }
     if (tag === 'label') {
       const checkbox = getCheckboxInputFromLabel(el);
       if (checkbox) return getCheckboxContextText(checkbox);
@@ -185,6 +198,7 @@
         tag,
         type:         el.getAttribute('type') || '',
         placeholder:  el.getAttribute('placeholder') || '',
+        title:        el.getAttribute('title') || '',
         ariaLabel:    el.getAttribute('aria-label') || '',
         name:         el.getAttribute('name') || el.getAttribute('id') || '',
         href:         (el.getAttribute('href') || '').slice(0, 100),
@@ -383,16 +397,25 @@
         el.focus();
 
         // Native value setter for React compatibility
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-          globalThis.HTMLInputElement.prototype, 'value'
-        )?.set || Object.getOwnPropertyDescriptor(
-          globalThis.HTMLTextAreaElement.prototype, 'value'
-        )?.set;
+        // Use the matching prototype setter to avoid Illegal invocation
+        // (e.g., calling HTMLInputElement setter on a textarea element).
+        let nativeValueSetter = null;
+        if (el instanceof globalThis.HTMLTextAreaElement) {
+          nativeValueSetter = Object.getOwnPropertyDescriptor(
+            globalThis.HTMLTextAreaElement.prototype, 'value'
+          )?.set;
+        } else if (el instanceof globalThis.HTMLInputElement) {
+          nativeValueSetter = Object.getOwnPropertyDescriptor(
+            globalThis.HTMLInputElement.prototype, 'value'
+          )?.set;
+        }
 
-        if (nativeInputValueSetter) {
-          nativeInputValueSetter.call(el, action.value || '');
-        } else {
+        if (nativeValueSetter) {
+          nativeValueSetter.call(el, action.value || '');
+        } else if ('value' in el) {
           el.value = action.value || '';
+        } else {
+          return { success: false, error: `fill not supported for element: ${action.elementId}` };
         }
 
         el.dispatchEvent(new Event('input', { bubbles: true }));
