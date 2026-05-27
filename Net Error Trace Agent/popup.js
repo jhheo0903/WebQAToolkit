@@ -10,6 +10,10 @@ const promptSendButton = document.getElementById("promptSendButton");
 const themeToggleButton = document.getElementById("themeToggleButton");
 const settingsButton = document.getElementById("settingsButton");
 const settingsOverlay = document.getElementById("settingsOverlay");
+const mcpButton = document.getElementById("mcpButton");
+const mcpOverlay = document.getElementById("mcpOverlay");
+const mcpRefreshButton = document.getElementById("mcpRefreshButton");
+const mcpServerList = document.getElementById("mcpServerList");
 const providerTabs = document.getElementById("providerTabs");
 const providerFields = document.getElementById("providerFields");
 const saveSettingsButton = document.getElementById("saveSettingsButton");
@@ -27,6 +31,7 @@ let providerConfigs = {};
 let aiRunning = false;
 let copilotDeviceFlowState = null;
 let captureSessionPort = null;
+let mcpRefreshing = false;
 
 function startCaptureSession() {
   if (captureSessionPort) {
@@ -174,6 +179,88 @@ function toggleSettingsPanel(forceOpen) {
 
   settingsOverlay.classList.toggle("open", shouldOpen);
   settingsButton.classList.toggle("active", shouldOpen);
+
+  if (shouldOpen) toggleMcpPanel(false);
+}
+
+function toggleMcpPanel(forceOpen) {
+  if (!mcpOverlay || !mcpButton) {
+    return;
+  }
+
+  const shouldOpen = typeof forceOpen === "boolean"
+    ? forceOpen
+    : !mcpOverlay.classList.contains("open");
+
+  mcpOverlay.classList.toggle("open", shouldOpen);
+  mcpButton.classList.toggle("active", shouldOpen);
+
+  if (shouldOpen) toggleSettingsPanel(false);
+}
+
+function renderMcpPanel() {
+  if (!mcpServerList) {
+    return;
+  }
+
+  const cache = globalThis.MCPClient?._cache || {};
+  const entries = Object.values(cache);
+
+  if (entries.length === 0) {
+    mcpServerList.innerHTML = '<div class="mcpEmpty">MCP 서버가 없습니다.<br>mcp-servers.json을 편집하고 Refresh를 눌러주세요.</div>';
+    return;
+  }
+
+  mcpServerList.innerHTML = entries
+    .map((entry) => {
+      const { server, tools, error } = entry;
+      const dotClass = error ? "err" : "ok";
+
+      let toolsHtml;
+      if (error) {
+        toolsHtml = `<div class="mcpErrorText">${escapeHtml(error)}</div>`;
+      } else if (tools.length === 0) {
+        toolsHtml = '<div class="mcpToolItem"><span class="mcpToolName">연결됨 (도구 없음)</span></div>';
+      } else {
+        toolsHtml = tools
+          .map((tool) => {
+            const desc = tool.description
+              ? ` — ${escapeHtml(String(tool.description).slice(0, 80))}`
+              : "";
+            return `<div class="mcpToolItem"><span class="mcpToolName">${escapeHtml(tool.name)}</span>${desc}</div>`;
+          })
+          .join("");
+      }
+
+      return `
+        <div class="mcpServerItem">
+          <div class="mcpServerHeader">
+            <span class="mcpStatusDot ${dotClass}"></span>
+            <span class="mcpServerName">${escapeHtml(server.name)}</span>
+            <span class="mcpToolCount">${tools.length} tools</span>
+          </div>
+          <div class="mcpToolList">${toolsHtml}</div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+async function refreshMcpTools() {
+  if (!globalThis.MCPClient || mcpRefreshing) {
+    return;
+  }
+
+  mcpRefreshing = true;
+  if (mcpRefreshButton) mcpRefreshButton.textContent = "Refreshing...";
+
+  try {
+    await globalThis.MCPClient.refreshAll();
+    renderMcpPanel();
+  } finally {
+    mcpRefreshing = false;
+    if (mcpRefreshButton) mcpRefreshButton.textContent = "Refresh";
+  }
 }
 
 function parseResultToArray(value) {
@@ -772,7 +859,7 @@ function truncateText(value, maxLength) {
   return `${text.slice(0, maxLength)}...`;
 }
 
-function buildAiPrompt(userPrompt, captures) {
+function buildAiPrompt(userPrompt, captures, mcpTools) {
   const compactLogs = captures.slice(0, 35).map((item, index) => ({
     idx: index + 1,
     id: item.id,
@@ -782,6 +869,10 @@ function buildAiPrompt(userPrompt, captures) {
     timestamp: item.timestamp,
     responseBody: truncateText(item.responseBody, 500)
   }));
+
+  const toolsContext = mcpTools?.length
+    ? ["\n" + globalThis.MCPClient.buildContextString(mcpTools)]
+    : [];
 
   return [
     "You are a network error analyst.",
@@ -796,6 +887,7 @@ function buildAiPrompt(userPrompt, captures) {
     "- summary must be concise and practical.",
     "- filter_query should be useful with simple text contains matching.",
     "- actions should be 0~3 concrete next debugging steps.",
+    ...toolsContext,
     "",
     `User request: ${userPrompt}`,
     `Total logs: ${captures.length}`,
@@ -840,7 +932,8 @@ async function runPromptWithAi() {
       return;
     }
 
-    const aiPrompt = buildAiPrompt(promptText, captures);
+    const mcpTools = await globalThis.MCPClient?.getAllTools().catch(() => []) || [];
+    const aiPrompt = buildAiPrompt(promptText, captures, mcpTools);
     const { result, usage } = await globalThis.AIProviders.callAI(currentProvider, config, aiPrompt);
 
     const summary = String(result?.summary || "").trim();
@@ -950,7 +1043,29 @@ saveSettingsButton.addEventListener("click", async () => {
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     toggleSettingsPanel(false);
+    toggleMcpPanel(false);
   }
+});
+
+mcpButton?.addEventListener("click", () => {
+  toggleMcpPanel();
+});
+
+mcpRefreshButton?.addEventListener("click", () => {
+  refreshMcpTools();
+});
+
+document.addEventListener("click", (event) => {
+  if (!mcpOverlay?.classList.contains("open")) {
+    return;
+  }
+
+  const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+  if (path.includes(mcpOverlay) || path.includes(mcpButton)) {
+    return;
+  }
+
+  toggleMcpPanel(false);
 });
 
 promptSendButton.addEventListener("click", () => {
@@ -977,6 +1092,13 @@ loadAiConfig().finally(() => {
 autoResizePrompt();
 updatePromptButtonState();
 setInterval(render, 2000);
+
+if (globalThis.MCPClient) {
+  globalThis.MCPClient.loadCached().then(() => {
+    renderMcpPanel();
+    globalThis.MCPClient.refreshAll().then(() => renderMcpPanel()).catch(() => null);
+  });
+}
 
 window.addEventListener("beforeunload", () => {
   stopCaptureSession();

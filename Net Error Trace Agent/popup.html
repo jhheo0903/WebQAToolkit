@@ -722,6 +722,140 @@
         background: #1a1e28;
       }
 
+      .mcpOverlay {
+        display: none;
+        position: absolute;
+        top: 44px;
+        left: 0;
+        right: 0;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+        padding: 10px 12px 12px;
+        z-index: 100;
+        opacity: 0;
+        transform: translateY(-8px);
+        pointer-events: none;
+        transition: opacity 0.2s ease, transform 0.2s ease;
+        max-height: 340px;
+        overflow-y: auto;
+      }
+
+      .mcpOverlay.open {
+        display: block;
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+      }
+
+      .mcpHead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+
+      .mcpServerItem {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 10px;
+        margin-bottom: 6px;
+        background: var(--surface2);
+      }
+
+      .mcpServerHeader {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 4px;
+      }
+
+      .mcpStatusDot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        background: var(--line-strong);
+      }
+
+      .mcpStatusDot.ok {
+        background: #16a34a;
+      }
+
+      .mcpStatusDot.err {
+        background: #dc2626;
+      }
+
+      .mcpServerName {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text);
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .mcpToolCount {
+        font-size: 10px;
+        color: var(--muted);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 1px 7px;
+        flex-shrink: 0;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      .mcpToolList {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin-top: 4px;
+      }
+
+      .mcpToolItem {
+        font-size: 10px;
+        color: var(--muted);
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        padding: 2px 0 2px 12px;
+        position: relative;
+        line-height: 1.4;
+      }
+
+      .mcpToolItem::before {
+        content: "•";
+        position: absolute;
+        left: 2px;
+        color: var(--accent);
+      }
+
+      .mcpToolName {
+        color: var(--text);
+        font-weight: 500;
+      }
+
+      .mcpErrorText {
+        font-size: 10px;
+        color: #dc2626;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        margin-top: 2px;
+        word-break: break-all;
+      }
+
+      :root[data-theme="dark"] .mcpErrorText {
+        color: #f87171;
+      }
+
+      .mcpEmpty {
+        font-size: 11px;
+        color: var(--muted);
+        text-align: center;
+        padding: 14px 0;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
       @keyframes card-in {
         from {
           opacity: 0;
@@ -744,6 +878,15 @@
           <span class="status-indicator"></span>
           <span id="statusText">ready</span>
         </div>
+        <button id="mcpButton" class="iconButton btn-mcp" type="button" aria-label="MCP servers">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="6" y="3" width="12" height="10" rx="2"/>
+            <line x1="10" y1="3" x2="10" y2="1"/>
+            <line x1="14" y1="3" x2="14" y2="1"/>
+            <path d="M12 13v8"/>
+            <path d="M8 17h8"/>
+          </svg>
+        </button>
         <button id="settingsButton" class="iconButton btn-settings" type="button" aria-label="AI settings">⚙</button>
       </div>
       <div class="actionBar">
@@ -764,6 +907,13 @@
           </div>
         </div>
       </section>
+      <section id="mcpOverlay" class="mcpOverlay" aria-label="MCP servers panel">
+        <div class="mcpHead">
+          <span class="settingsTitle">MCP Servers</span>
+          <button id="mcpRefreshButton" class="actionBtn" type="button">Refresh</button>
+        </div>
+        <div id="mcpServerList"></div>
+      </section>
       <div id="filterInfo" class="filterInfo">Current tab logs</div>
       <div id="aiInfo" class="aiInfo"></div>
       <div id="list" class="list"></div>
@@ -781,6 +931,7 @@
       </div>
     </div>
     <script src="providers.js"></script>
+    <script src="mcp.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

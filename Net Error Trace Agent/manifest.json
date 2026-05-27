@@ -13,5 +13,11 @@
   },
   "action": {
     "default_title": "Open Network Error Panel"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["mcp-servers.json"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }
