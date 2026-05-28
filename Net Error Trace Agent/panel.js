@@ -1,13 +1,14 @@
 const STORAGE_KEY = "capturedErrors";
 const PROVIDER_CONFIGS_KEY = "providerConfigs";
 const SELECTED_PROVIDER_KEY = "selectedProvider";
+const GITHUB_AUTH_KEY = "githubCopilotAuth";
+
 const listElement = document.getElementById("list");
 const refreshButton = document.getElementById("refreshButton");
 const clearButton = document.getElementById("clearButton");
 const filterInfo = document.getElementById("filterInfo");
 const promptInput = document.getElementById("promptInput");
 const promptSendButton = document.getElementById("promptSendButton");
-const themeToggleButton = document.getElementById("themeToggleButton");
 const settingsButton = document.getElementById("settingsButton");
 const settingsOverlay = document.getElementById("settingsOverlay");
 const mcpButton = document.getElementById("mcpButton");
@@ -19,48 +20,18 @@ const providerFields = document.getElementById("providerFields");
 const saveSettingsButton = document.getElementById("saveSettingsButton");
 const saveStatus = document.getElementById("saveStatus");
 const aiInfo = document.getElementById("aiInfo");
-const GITHUB_AUTH_KEY = "githubCopilotAuth";
-const CAPTURE_PORT_NAME = "net-error-capture-session";
 
 let filterQuery = "";
 const expandedIds = new Set();
+const activeBodyTab = {};
 let lastRenderSignature = "";
-const THEME_STORAGE_KEY = "networkErrorPanelTheme";
 let currentProvider = "openai";
 let providerConfigs = {};
 let aiRunning = false;
 let copilotDeviceFlowState = null;
-let captureSessionPort = null;
 let mcpRefreshing = false;
 
-function startCaptureSession() {
-  if (captureSessionPort) {
-    return;
-  }
-
-  try {
-    captureSessionPort = chrome.runtime.connect({ name: CAPTURE_PORT_NAME });
-    captureSessionPort.onDisconnect.addListener(() => {
-      captureSessionPort = null;
-    });
-  } catch {
-    captureSessionPort = null;
-  }
-}
-
-function stopCaptureSession() {
-  if (!captureSessionPort) {
-    return;
-  }
-
-  try {
-    captureSessionPort.disconnect();
-  } catch {
-    // Ignore teardown errors during panel close/navigation.
-  }
-
-  captureSessionPort = null;
-}
+// ─── Utilities ───────────────────────────────────────────────────────────────
 
 function escapeHtml(value) {
   return String(value)
@@ -73,136 +44,89 @@ function escapeHtml(value) {
 
 function formatTimestamp(timestamp) {
   const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) {
-    return "Unknown time";
-  }
-
-  return date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? "Unknown time" : date.toLocaleString();
 }
 
 function classifyStatus(status) {
-  if (status >= 500) {
-    return "error";
-  }
-
-  return "warning";
+  const s = Number(status);
+  if (s >= 500) return "error";
+  if (s >= 400) return "warning";
+  return "info";
 }
 
 function normalizeText(value) {
   return String(value || "").toLowerCase();
 }
 
+function truncateText(value, maxLength) {
+  const text = String(value || "");
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength)}...`;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseResultToArray(value) {
+  return Array.isArray(value) ? value.filter(Boolean).map((item) => String(item)) : [];
+}
+
+// ─── Theme ───────────────────────────────────────────────────────────────────
+
+function initializeTheme() {
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  document.documentElement.setAttribute("data-theme", mq.matches ? "dark" : "light");
+  mq.addEventListener("change", (e) => {
+    document.documentElement.setAttribute("data-theme", e.matches ? "dark" : "light");
+  });
+}
+
+// ─── Status helpers ───────────────────────────────────────────────────────────
+
 function getProviderLabel(providerKey) {
   return globalThis.AIProviders?.PROVIDERS?.[providerKey]?.label || providerKey;
 }
 
 function setSaveStatus(message, type) {
-  if (!saveStatus) {
-    return;
-  }
-
+  if (!saveStatus) return;
   saveStatus.textContent = message || "";
   saveStatus.className = type ? `saveStatus ${type}` : "saveStatus";
 }
 
 function setAiInfo(message) {
-  if (!aiInfo) {
-    return;
-  }
-
+  if (!aiInfo) return;
   const text = String(message || "").trim();
-  if (!text) {
-    aiInfo.textContent = "";
-    aiInfo.classList.remove("show");
-    return;
-  }
-
+  if (!text) { aiInfo.textContent = ""; aiInfo.classList.remove("show"); return; }
   aiInfo.textContent = text;
   aiInfo.classList.add("show");
 }
 
-function applyTheme(theme) {
-  const nextTheme = theme === "dark" ? "dark" : "light";
-  document.documentElement.setAttribute("data-theme", nextTheme);
-
-  if (themeToggleButton) {
-    themeToggleButton.textContent = nextTheme === "dark" ? "Light" : "Dark";
-  }
-}
-
-function initializeTheme() {
-  const storedTheme = localStorage.getItem(THEME_STORAGE_KEY);
-  const preferredTheme = storedTheme === "dark" || storedTheme === "light"
-    ? storedTheme
-    : "light";
-
-  applyTheme(preferredTheme);
-}
-
-function toggleTheme() {
-  const currentTheme = document.documentElement.getAttribute("data-theme") === "dark"
-    ? "dark"
-    : "light";
-  const nextTheme = currentTheme === "dark" ? "light" : "dark";
-
-  localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
-  applyTheme(nextTheme);
-}
-
-function matchesFilter(item) {
-  if (!filterQuery) {
-    return true;
-  }
-
-  const haystack = [
-    item.url,
-    item.method,
-    item.status,
-    item.responseBody,
-    item.timestamp,
-    item.pageUrl
-  ]
-    .map((value) => normalizeText(value))
-    .join("\n");
-
-  return haystack.includes(normalizeText(filterQuery));
-}
+// ─── Overlays ────────────────────────────────────────────────────────────────
 
 function toggleSettingsPanel(forceOpen) {
-  if (!settingsOverlay || !settingsButton) {
-    return;
-  }
-
+  if (!settingsOverlay || !settingsButton) return;
   const shouldOpen = typeof forceOpen === "boolean"
     ? forceOpen
     : !settingsOverlay.classList.contains("open");
-
   settingsOverlay.classList.toggle("open", shouldOpen);
   settingsButton.classList.toggle("active", shouldOpen);
-
   if (shouldOpen) toggleMcpPanel(false);
 }
 
 function toggleMcpPanel(forceOpen) {
-  if (!mcpOverlay || !mcpButton) {
-    return;
-  }
-
+  if (!mcpOverlay || !mcpButton) return;
   const shouldOpen = typeof forceOpen === "boolean"
     ? forceOpen
     : !mcpOverlay.classList.contains("open");
-
   mcpOverlay.classList.toggle("open", shouldOpen);
   mcpButton.classList.toggle("active", shouldOpen);
-
   if (shouldOpen) toggleSettingsPanel(false);
 }
 
-function renderMcpPanel() {
-  if (!mcpServerList) {
-    return;
-  }
+// ─── MCP Panel ───────────────────────────────────────────────────────────────
 
+function renderMcpPanel() {
+  if (!mcpServerList) return;
   const cache = globalThis.MCPClient?._cache || {};
   const entries = Object.values(cache);
 
@@ -211,49 +135,35 @@ function renderMcpPanel() {
     return;
   }
 
-  mcpServerList.innerHTML = entries
-    .map((entry) => {
-      const { server, tools, error } = entry;
-      const dotClass = error ? "err" : "ok";
-
-      let toolsHtml;
-      if (error) {
-        toolsHtml = `<div class="mcpErrorText">${escapeHtml(error)}</div>`;
-      } else if (tools.length === 0) {
-        toolsHtml = '<div class="mcpToolItem"><span class="mcpToolName">연결됨 (도구 없음)</span></div>';
-      } else {
-        toolsHtml = tools
-          .map((tool) => {
-            const desc = tool.description
-              ? ` — ${escapeHtml(String(tool.description).slice(0, 80))}`
-              : "";
-            return `<div class="mcpToolItem"><span class="mcpToolName">${escapeHtml(tool.name)}</span>${desc}</div>`;
-          })
-          .join("");
-      }
-
-      return `
-        <div class="mcpServerItem">
-          <div class="mcpServerHeader">
-            <span class="mcpStatusDot ${dotClass}"></span>
-            <span class="mcpServerName">${escapeHtml(server.name)}</span>
-            <span class="mcpToolCount">${tools.length} tools</span>
-          </div>
-          <div class="mcpToolList">${toolsHtml}</div>
+  mcpServerList.innerHTML = entries.map(({ server, tools, error }) => {
+    const dotClass = error ? "err" : "ok";
+    let toolsHtml;
+    if (error) {
+      toolsHtml = `<div class="mcpErrorText">${escapeHtml(error)}</div>`;
+    } else if (tools.length === 0) {
+      toolsHtml = '<div class="mcpToolItem"><span class="mcpToolName">연결됨 (도구 없음)</span></div>';
+    } else {
+      toolsHtml = tools.map((tool) => {
+        const desc = tool.description ? ` — ${escapeHtml(String(tool.description).slice(0, 80))}` : "";
+        return `<div class="mcpToolItem"><span class="mcpToolName">${escapeHtml(tool.name)}</span>${desc}</div>`;
+      }).join("");
+    }
+    return `
+      <div class="mcpServerItem">
+        <div class="mcpServerHeader">
+          <span class="mcpStatusDot ${dotClass}"></span>
+          <span class="mcpServerName">${escapeHtml(server.name)}</span>
+          <span class="mcpToolCount">${tools.length} tools</span>
         </div>
-      `;
-    })
-    .join("");
+        <div class="mcpToolList">${toolsHtml}</div>
+      </div>`;
+  }).join("");
 }
 
 async function refreshMcpTools() {
-  if (!globalThis.MCPClient || mcpRefreshing) {
-    return;
-  }
-
+  if (!globalThis.MCPClient || mcpRefreshing) return;
   mcpRefreshing = true;
   if (mcpRefreshButton) mcpRefreshButton.textContent = "Refreshing...";
-
   try {
     await globalThis.MCPClient.refreshAll();
     renderMcpPanel();
@@ -263,34 +173,7 @@ async function refreshMcpTools() {
   }
 }
 
-function parseResultToArray(value) {
-  if (Array.isArray(value)) {
-    return value.filter(Boolean).map((item) => String(item));
-  }
-
-  return [];
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function getGitHubModelField() {
-  const defs = globalThis.AIProviders?.PROVIDERS || {};
-  return defs.github_copilot?.fields?.find((item) => item.key === "model") || null;
-}
-
-function applyGitHubModelOptions(options) {
-  const modelField = getGitHubModelField();
-  if (!modelField || !Array.isArray(options) || options.length === 0) {
-    return;
-  }
-
-  modelField.options = options.map((item) => ({
-    value: String(item.value),
-    label: String(item.label || item.value)
-  }));
-}
+// ─── GitHub Copilot auth ──────────────────────────────────────────────────────
 
 async function getGitHubAuth() {
   const result = await chrome.storage.local.get(GITHUB_AUTH_KEY);
@@ -315,10 +198,8 @@ function getGitHubAuthMarkup(auth) {
           <button type="button" class="ghButton ghost" data-gh-action="refresh-models">Refresh Models</button>
           <button type="button" class="ghButton ghost" data-gh-action="logout">Logout</button>
         </div>
-      </div>
-    `;
+      </div>`;
   }
-
   if (copilotDeviceFlowState) {
     return `
       <div class="ghAuthWrap">
@@ -330,49 +211,41 @@ function getGitHubAuthMarkup(auth) {
           <button type="button" class="ghButton ghost" data-gh-action="cancel-login">Cancel</button>
         </div>
         <div class="ghHelp">Waiting for authorization...</div>
-      </div>
-    `;
+      </div>`;
   }
-
   return `
     <div class="ghAuthWrap">
       <div class="ghStatus">Sign in with your GitHub account to use Copilot API.</div>
       <button type="button" class="ghButton" data-gh-action="login">Login with GitHub</button>
-    </div>
-  `;
+    </div>`;
 }
 
 async function refreshGitHubModelsFromAuth(auth) {
-  if (!isGitHubLoggedIn(auth) || !globalThis.AIProviders?.GithubCopilotAPI) {
-    return;
-  }
-
+  if (!isGitHubLoggedIn(auth) || !globalThis.AIProviders?.GithubCopilotAPI) return;
   const api = globalThis.AIProviders.GithubCopilotAPI;
   const sessionToken = await api.ensureSessionToken(auth).catch(() => null);
   const models = await api.fetchModels(sessionToken, auth.accessToken).catch(() => null);
-  if (!models || models.length === 0) {
-    return;
-  }
-
+  if (!models || models.length === 0) return;
   auth.models = models;
-  if (sessionToken) {
-    auth.sessionToken = sessionToken;
-  }
+  if (sessionToken) auth.sessionToken = sessionToken;
   await setGitHubAuth(auth);
-
   applyGitHubModelOptions(models);
-
-  if (!providerConfigs.github_copilot) {
-    providerConfigs.github_copilot = {};
-  }
-
+  if (!providerConfigs.github_copilot) providerConfigs.github_copilot = {};
   const currentModel = providerConfigs.github_copilot.model;
-  const hasCurrent = models.some((item) => item.value === currentModel);
-  if (!hasCurrent) {
+  if (!models.some((item) => item.value === currentModel)) {
     providerConfigs.github_copilot.model = models[0].value;
   }
-
   await chrome.storage.local.set({ [PROVIDER_CONFIGS_KEY]: providerConfigs });
+}
+
+function getGitHubModelField() {
+  return globalThis.AIProviders?.PROVIDERS?.github_copilot?.fields?.find((f) => f.key === "model") || null;
+}
+
+function applyGitHubModelOptions(options) {
+  const modelField = getGitHubModelField();
+  if (!modelField || !Array.isArray(options) || options.length === 0) return;
+  modelField.options = options.map((item) => ({ value: String(item.value), label: String(item.label || item.value) }));
 }
 
 async function handleGitHubLogin() {
@@ -380,10 +253,8 @@ async function handleGitHubLogin() {
     setSaveStatus("GitHub Copilot API module unavailable", "err");
     return;
   }
-
   const api = globalThis.AIProviders.GithubCopilotAPI;
   setSaveStatus("Starting GitHub login...", "");
-
   let flow;
   try {
     flow = await api.startDeviceFlow();
@@ -391,7 +262,6 @@ async function handleGitHubLogin() {
     setSaveStatus(`Login start failed: ${error.message}`, "err");
     return;
   }
-
   copilotDeviceFlowState = {
     deviceCode: flow.device_code,
     userCode: flow.user_code,
@@ -405,7 +275,6 @@ async function handleGitHubLogin() {
 
   while (copilotDeviceFlowState && !copilotDeviceFlowState.cancelled && Date.now() < copilotDeviceFlowState.expiresAt) {
     await sleep(copilotDeviceFlowState.intervalSec * 1000);
-
     let tokenResult;
     try {
       tokenResult = await api.checkDeviceToken(copilotDeviceFlowState.deviceCode);
@@ -413,42 +282,27 @@ async function handleGitHubLogin() {
       setSaveStatus(`Login check failed: ${error.message}`, "err");
       continue;
     }
-
-    if (tokenResult?.error === "authorization_pending") {
-      continue;
-    }
-
-    if (tokenResult?.error === "slow_down") {
-      copilotDeviceFlowState.intervalSec += 3;
-      continue;
-    }
-
+    if (tokenResult?.error === "authorization_pending") continue;
+    if (tokenResult?.error === "slow_down") { copilotDeviceFlowState.intervalSec += 3; continue; }
     if (tokenResult?.access_token) {
       setSaveStatus("Fetching Copilot token/model list...", "");
       const sessionResult = await api.getCopilotSessionToken(tokenResult.access_token).catch(() => null);
-      const sessionToken = sessionResult?.token || null;
-      const sessionExpiry = sessionResult?.expiresAt || 0;
-
       const auth = {
         accessToken: tokenResult.access_token,
-        username: null,
-        loginAt: Date.now(),
-        sessionToken,
-        sessionExpiry,
+        username: null, loginAt: Date.now(),
+        sessionToken: sessionResult?.token || null,
+        sessionExpiry: sessionResult?.expiresAt || 0,
         models: []
       };
-
       auth.username = await api.getUsername(auth.accessToken).catch(() => null);
-      auth.models = await api.fetchModels(sessionToken, auth.accessToken).catch(() => []);
+      auth.models = await api.fetchModels(auth.sessionToken, auth.accessToken).catch(() => []);
       await setGitHubAuth(auth);
       await refreshGitHubModelsFromAuth(auth).catch(() => null);
-
       copilotDeviceFlowState = null;
       setSaveStatus("GitHub Copilot login complete", "ok");
       await renderProviderFields();
       return;
     }
-
     if (tokenResult?.error) {
       copilotDeviceFlowState = null;
       setSaveStatus(`Login failed: ${tokenResult.error}`, "err");
@@ -456,11 +310,7 @@ async function handleGitHubLogin() {
       return;
     }
   }
-
-  if (copilotDeviceFlowState && !copilotDeviceFlowState.cancelled) {
-    setSaveStatus("Login timeout. Try again.", "err");
-  }
-
+  if (copilotDeviceFlowState && !copilotDeviceFlowState.cancelled) setSaveStatus("Login timeout. Try again.", "err");
   copilotDeviceFlowState = null;
   await renderProviderFields();
 }
@@ -473,96 +323,59 @@ async function handleGitHubLogout() {
 }
 
 async function handleGitHubOpenVerify() {
-  if (!copilotDeviceFlowState?.verifyUrl) {
-    return;
-  }
-
+  if (!copilotDeviceFlowState?.verifyUrl) return;
   await chrome.tabs.create({ url: copilotDeviceFlowState.verifyUrl });
 }
 
+// ─── Provider settings UI ─────────────────────────────────────────────────────
+
 function isProviderConfigured(providerKey, config) {
-  if (providerKey === "ollama") {
-    return true;
-  }
-
-  if (providerKey === "github_copilot") {
-    return true;
-  }
-
-  if (providerKey === "openai" || providerKey === "claude") {
-    return Boolean(config?.apiKey);
-  }
-
-  if (providerKey === "azure_openai") {
-    return Boolean(config?.apiKey && config?.endpoint && config?.deployment);
-  }
-
+  if (providerKey === "ollama" || providerKey === "github_copilot") return true;
+  if (providerKey === "openai" || providerKey === "claude") return Boolean(config?.apiKey);
+  if (providerKey === "azure_openai") return Boolean(config?.apiKey && config?.endpoint && config?.deployment);
   return false;
 }
 
-function updatePromptButtonState() {
-  const hasText = promptInput.value.trim().length > 0;
-  promptSendButton.disabled = !hasText || aiRunning;
-}
-
 function renderProviderTabs() {
-  if (!providerTabs) {
-    return;
-  }
-
+  if (!providerTabs) return;
   const defs = globalThis.AIProviders?.PROVIDERS || {};
   providerTabs.innerHTML = "";
-
-  Object.entries(defs).forEach(([providerKey, def]) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `provider-tab ${providerKey === currentProvider ? "active" : ""}`;
-    button.textContent = def.label;
-    button.addEventListener("click", () => {
-      currentProvider = providerKey;
+  Object.entries(defs).forEach(([key, def]) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `provider-tab ${key === currentProvider ? "active" : ""}`;
+    btn.textContent = def.label;
+    btn.addEventListener("click", () => {
+      currentProvider = key;
       renderProviderTabs();
       renderProviderFields();
       setSaveStatus("", "");
     });
-    providerTabs.appendChild(button);
+    providerTabs.appendChild(btn);
   });
 }
 
 function renderGitHubCopilotSettings(container, auth, def, saved) {
   container.innerHTML = getGitHubAuthMarkup(auth);
-  if (!isGitHubLoggedIn(auth)) {
-    return;
-  }
-
-  const modelField = def.fields?.find((field) => field.key === "model");
-  if (!modelField) {
-    return;
-  }
-
+  if (!isGitHubLoggedIn(auth)) return;
+  const modelField = def.fields?.find((f) => f.key === "model");
+  if (!modelField) return;
   const models = auth.models?.length ? auth.models : (modelField.options || []);
   const modelRow = document.createElement("div");
   modelRow.className = "field-row";
-
   const label = document.createElement("span");
   label.className = "field-label";
   label.textContent = "Model";
-
   const select = document.createElement("select");
   select.className = "field-select";
   select.id = "aiField-model";
   select.dataset.fieldKey = "model";
-
-  models.forEach((model) => {
-    const option = document.createElement("option");
-    option.value = model.value;
-    option.textContent = model.label;
-    select.appendChild(option);
+  models.forEach((m) => {
+    const opt = document.createElement("option");
+    opt.value = m.value; opt.textContent = m.label;
+    select.appendChild(opt);
   });
-
-  if (saved.model) {
-    select.value = saved.model;
-  }
-
+  if (saved.model) select.value = saved.model;
   select.addEventListener("input", () => setSaveStatus("", ""));
   modelRow.appendChild(label);
   modelRow.appendChild(select);
@@ -570,54 +383,40 @@ function renderGitHubCopilotSettings(container, auth, def, saved) {
 }
 
 async function renderProviderFields() {
-  if (!providerFields) {
-    return;
-  }
-
+  if (!providerFields) return;
   const defs = globalThis.AIProviders?.PROVIDERS || {};
   const def = defs[currentProvider];
   const saved = providerConfigs[currentProvider] || {};
-
   providerFields.innerHTML = "";
-
-  if (!def) {
-    return;
-  }
-
+  if (!def) return;
   if (def.hasOAuthFlow) {
     const auth = await getGitHubAuth();
     renderGitHubCopilotSettings(providerFields, auth, def, saved);
     return;
   }
-
   if (!Array.isArray(def.fields) || def.fields.length === 0) {
-    providerFields.innerHTML = "<div class=\"composerHint\">No additional settings required.</div>";
+    providerFields.innerHTML = '<div class="composerHint">No additional settings required.</div>';
     return;
   }
-
   def.fields.forEach((field) => {
     const row = document.createElement("div");
     row.className = "field-row";
-
     const label = document.createElement("label");
     label.className = "field-label";
     label.setAttribute("for", `aiField-${field.key}`);
     label.textContent = field.label;
-
     let input;
     if (field.type === "select") {
       input = document.createElement("select");
       input.className = "field-select";
       input.id = `aiField-${field.key}`;
       input.dataset.fieldKey = field.key;
-      (field.options || []).forEach((option) => {
+      (field.options || []).forEach((opt) => {
         const node = document.createElement("option");
-        node.value = option.value;
-        node.textContent = option.label;
+        node.value = opt.value; node.textContent = opt.label;
         input.appendChild(node);
       });
-      const defaultValue = field.options?.[0]?.value || "";
-      input.value = saved[field.key] || defaultValue;
+      input.value = saved[field.key] || field.options?.[0]?.value || "";
     } else {
       input = document.createElement("input");
       input.className = "field-input";
@@ -628,7 +427,6 @@ async function renderProviderFields() {
       input.value = saved[field.key] || "";
       input.autocomplete = "off";
     }
-
     input.addEventListener("input", () => setSaveStatus("", ""));
     row.appendChild(label);
     row.appendChild(input);
@@ -639,16 +437,11 @@ async function renderProviderFields() {
 async function loadAiConfig() {
   const result = await chrome.storage.local.get([SELECTED_PROVIDER_KEY, PROVIDER_CONFIGS_KEY]);
   providerConfigs = result[PROVIDER_CONFIGS_KEY] || {};
-
   const defs = globalThis.AIProviders?.PROVIDERS || {};
-  const storedProvider = result[SELECTED_PROVIDER_KEY];
-  if (storedProvider && defs[storedProvider]) {
-    currentProvider = storedProvider;
-  }
-
+  const stored = result[SELECTED_PROVIDER_KEY];
+  if (stored && defs[stored]) currentProvider = stored;
   const githubAuth = await getGitHubAuth();
   await refreshGitHubModelsFromAuth(githubAuth).catch(() => null);
-
   renderProviderTabs();
   await renderProviderFields();
 }
@@ -657,11 +450,7 @@ function collectCurrentProviderConfig() {
   const defs = globalThis.AIProviders?.PROVIDERS || {};
   const def = defs[currentProvider];
   const config = {};
-
-  if (!def || !Array.isArray(def.fields)) {
-    return config;
-  }
-
+  if (!def || !Array.isArray(def.fields)) return config;
   if (def.hasOAuthFlow) {
     const modelNode = document.getElementById("aiField-model");
     if (modelNode instanceof HTMLSelectElement || modelNode instanceof HTMLInputElement) {
@@ -669,112 +458,108 @@ function collectCurrentProviderConfig() {
     }
     return config;
   }
-
   def.fields.forEach((field) => {
     const node = document.getElementById(`aiField-${field.key}`);
-    if (!(node instanceof HTMLInputElement) && !(node instanceof HTMLSelectElement)) {
-      return;
-    }
+    if (!(node instanceof HTMLInputElement) && !(node instanceof HTMLSelectElement)) return;
     config[field.key] = String(node.value || "").trim();
   });
-
   return config;
 }
 
 async function saveProviderConfig() {
   const config = collectCurrentProviderConfig();
   providerConfigs[currentProvider] = config;
-
   await chrome.storage.local.set({
     [PROVIDER_CONFIGS_KEY]: providerConfigs,
     [SELECTED_PROVIDER_KEY]: currentProvider
   });
-
   setSaveStatus("Saved", "ok");
 }
 
-providerFields.addEventListener("click", async (event) => {
-  const target = event.target instanceof HTMLElement
-    ? event.target.closest("[data-gh-action]")
-    : null;
-  if (!(target instanceof HTMLElement)) {
-    return;
-  }
+// ─── Filter ───────────────────────────────────────────────────────────────────
 
-  const action = target.getAttribute("data-gh-action");
-  if (!action) {
-    return;
-  }
-
-  if (action === "login") {
-    await handleGitHubLogin();
-    return;
-  }
-
-  if (action === "logout") {
-    await handleGitHubLogout();
-    return;
-  }
-
-  if (action === "open-verify") {
-    await handleGitHubOpenVerify();
-    return;
-  }
-
-  if (action === "copy-code") {
-    if (copilotDeviceFlowState?.userCode) {
-      await navigator.clipboard.writeText(copilotDeviceFlowState.userCode).catch(() => null);
-      setSaveStatus("Device code copied", "ok");
-    }
-    return;
-  }
-
-  if (action === "cancel-login") {
-    if (copilotDeviceFlowState) {
-      copilotDeviceFlowState.cancelled = true;
-    }
-    copilotDeviceFlowState = null;
-    setSaveStatus("Login cancelled", "");
-    await renderProviderFields();
-    return;
-  }
-
-  if (action === "refresh-models") {
-    const auth = await getGitHubAuth();
-    await refreshGitHubModelsFromAuth(auth);
-    setSaveStatus("Model list refreshed", "ok");
-    await renderProviderFields();
-  }
-});
+function matchesFilter(item) {
+  if (!filterQuery) return true;
+  const haystack = [
+    item.url, item.method, item.status,
+    item.responseBody, item.requestPayload,
+    item.timestamp
+  ].map(normalizeText).join("\n");
+  return haystack.includes(normalizeText(filterQuery));
+}
 
 function updateFilterInfo(totalCount, shownCount) {
-  if (!filterInfo) {
-    return;
-  }
+  if (!filterInfo) return;
+  filterInfo.textContent = filterQuery
+    ? `Filtered: ${shownCount} / ${totalCount}`
+    : `Current tab logs: ${shownCount}`;
+}
 
-  if (!filterQuery) {
-    filterInfo.textContent = `Current tab logs: ${shownCount}`;
-    return;
-  }
+// ─── Item rendering ───────────────────────────────────────────────────────────
 
-  filterInfo.textContent = `Filtered: ${shownCount} / ${totalCount}`;
+function buildHeaderTableHtml(headers) {
+  if (!Array.isArray(headers) || headers.length === 0) {
+    return '<span style="font-size:11px;color:var(--muted)">No headers captured</span>';
+  }
+  const rows = headers.map(({ name, value }) =>
+    `<tr><td>${escapeHtml(name)}</td><td>${escapeHtml(value)}</td></tr>`
+  ).join("");
+  return `<table class="headerTable"><tbody>${rows}</tbody></table>`;
+}
+
+function buildTimingHtml(timing) {
+  if (!timing || timing <= 0) {
+    return '<span style="font-size:11px;color:var(--muted)">No timing info</span>';
+  }
+  return `<div class="timingRow"><span class="timingLabel">Total time</span><span class="timingValue">${timing.toFixed(1)} ms</span></div>`;
 }
 
 function createItemMarkup(item, index) {
-  const captureId = escapeHtml(String(item.id || index));
+  const id = escapeHtml(String(item.id || index));
   const statusClass = classifyStatus(item.status);
   const statusLabel = String(item.status || "-");
   const methodLabel = escapeHtml(item.method || "UNKNOWN");
   const urlLabel = escapeHtml(item.url || "Unknown URL");
   const timeLabel = escapeHtml(formatTimestamp(item.timestamp));
-  const bodyText = item.responseBody === null ? "null" : String(item.responseBody);
-  const bodyLabel = escapeHtml(bodyText);
   const isOpen = expandedIds.has(String(item.id || index));
+  const currentTab = activeBodyTab[id] || "response";
   const chevron = isOpen ? "▾" : "▸";
+
+  const responseBodyText = item.responseBody === null ? "null" : String(item.responseBody || "");
+  const requestPayloadText = item.requestPayload === null ? "null" : String(item.requestPayload || "(none)");
+
+  const tabs = [
+    { key: "response", label: "Response Body" },
+    { key: "payload", label: "Request Payload" },
+    { key: "reqheaders", label: "Req Headers" },
+    { key: "resheaders", label: "Res Headers" },
+    { key: "timing", label: "Timing" }
+  ];
+
+  const tabsHtml = tabs.map((t) =>
+    `<button class="bodyTab${currentTab === t.key ? " active" : ""}" data-tab-id="${id}" data-tab-key="${t.key}" type="button">${t.label}</button>`
+  ).join("");
+
+  const panesHtml = `
+    <div class="bodyPane${currentTab === "response" ? " active" : ""}" data-pane-id="${id}" data-pane-key="response">
+      <pre>${escapeHtml(responseBodyText)}</pre>
+    </div>
+    <div class="bodyPane${currentTab === "payload" ? " active" : ""}" data-pane-id="${id}" data-pane-key="payload">
+      <pre>${escapeHtml(requestPayloadText)}</pre>
+    </div>
+    <div class="bodyPane${currentTab === "reqheaders" ? " active" : ""}" data-pane-id="${id}" data-pane-key="reqheaders">
+      ${buildHeaderTableHtml(item.requestHeaders)}
+    </div>
+    <div class="bodyPane${currentTab === "resheaders" ? " active" : ""}" data-pane-id="${id}" data-pane-key="resheaders">
+      ${buildHeaderTableHtml(item.responseHeaders)}
+    </div>
+    <div class="bodyPane${currentTab === "timing" ? " active" : ""}" data-pane-id="${id}" data-pane-key="timing">
+      ${buildTimingHtml(item.timing)}
+    </div>`;
 
   return `
     <article class="item ${statusClass}" data-index="${index}">
-      <button class="summary" data-toggle-id="${captureId}" type="button">
+      <button class="summary" data-toggle-id="${id}" type="button">
         <div class="row">
           <span class="leftMeta">
             <span class="badge">${statusLabel}</span>
@@ -785,79 +570,71 @@ function createItemMarkup(item, index) {
         <div class="url" title="${urlLabel}">${urlLabel}</div>
         <div class="meta">${timeLabel}</div>
       </button>
-      <div class="body ${isOpen ? "open" : ""}" data-body-id="${captureId}">
-        <pre>${bodyLabel}</pre>
+      <div class="body${isOpen ? " open" : ""}" data-body-id="${id}">
+        <div class="bodyTabs">${tabsHtml}</div>
+        ${panesHtml}
       </div>
-    </article>
-  `;
+    </article>`;
 }
 
+// ─── List events ──────────────────────────────────────────────────────────────
+
 listElement.addEventListener("click", (event) => {
-  const target = event.target instanceof HTMLElement
-    ? event.target.closest("[data-toggle-id]")
-    : null;
+  const target = event.target instanceof HTMLElement ? event.target : null;
+  if (!target) return;
 
-  if (!(target instanceof HTMLElement)) {
+  // Tab switch
+  const tabBtn = target.closest("[data-tab-id]");
+  if (tabBtn instanceof HTMLElement) {
+    const tabId = tabBtn.getAttribute("data-tab-id");
+    const tabKey = tabBtn.getAttribute("data-tab-key");
+    if (tabId && tabKey) {
+      activeBodyTab[tabId] = tabKey;
+      // Toggle pane visibility without full re-render
+      const body = listElement.querySelector(`[data-body-id="${CSS.escape(tabId)}"]`);
+      if (body) {
+        body.querySelectorAll(".bodyTab").forEach((btn) => {
+          btn.classList.toggle("active", btn.getAttribute("data-tab-key") === tabKey);
+        });
+        body.querySelectorAll(".bodyPane").forEach((pane) => {
+          pane.classList.toggle("active", pane.getAttribute("data-pane-key") === tabKey);
+        });
+      }
+    }
     return;
   }
 
-  const captureId = target.getAttribute("data-toggle-id");
-  if (!captureId) {
-    return;
+  // Toggle expand
+  const toggleBtn = target.closest("[data-toggle-id]");
+  if (toggleBtn instanceof HTMLElement) {
+    const captureId = toggleBtn.getAttribute("data-toggle-id");
+    if (!captureId) return;
+    if (expandedIds.has(captureId)) {
+      expandedIds.delete(captureId);
+    } else {
+      expandedIds.add(captureId);
+    }
+    lastRenderSignature = "";
+    render();
   }
-
-  if (expandedIds.has(captureId)) {
-    expandedIds.delete(captureId);
-  } else {
-    expandedIds.add(captureId);
-  }
-
-  render();
 });
+
+// ─── Data loading ─────────────────────────────────────────────────────────────
 
 async function loadCaptures() {
   const result = await chrome.storage.local.get(STORAGE_KEY);
   const captures = Array.isArray(result[STORAGE_KEY]) ? result[STORAGE_KEY] : [];
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  const activeTabId = tabs[0] && Number.isInteger(tabs[0].id) ? tabs[0].id : null;
 
-  const filtered = activeTabId === null
-    ? captures
-    : captures.filter((item) => item && item.tabId === activeTabId);
+  const tabId = chrome.devtools?.inspectedWindow?.tabId ?? null;
+  const filtered = tabId !== null
+    ? captures.filter((item) => item && item.tabId === tabId)
+    : captures;
 
-  filtered.sort((a, b) => {
-    const aTime = new Date(a.timestamp).getTime();
-    const bTime = new Date(b.timestamp).getTime();
-    return bTime - aTime;
-  });
-
+  filtered.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   return filtered;
 }
 
-function autoResizePrompt() {
-  if (!promptInput) {
-    return;
-  }
-
-  promptInput.style.height = "auto";
-  const nextHeight = Math.min(promptInput.scrollHeight, 220);
-  promptInput.style.height = `${Math.max(nextHeight, 96)}px`;
-}
-
-function applyPromptFilter() {
-  filterQuery = String(promptInput.value || "").trim();
-  lastRenderSignature = "";
-  render();
-}
-
-function truncateText(value, maxLength) {
-  const text = String(value || "");
-  if (text.length <= maxLength) {
-    return text;
-  }
-
-  return `${text.slice(0, maxLength)}...`;
-}
+// ─── AI analysis ─────────────────────────────────────────────────────────────
 
 function buildAiPrompt(userPrompt, captures, mcpTools) {
   const compactLogs = captures.slice(0, 35).map((item, index) => ({
@@ -867,6 +644,7 @@ function buildAiPrompt(userPrompt, captures, mcpTools) {
     status: item.status,
     url: truncateText(item.url, 180),
     timestamp: item.timestamp,
+    requestPayload: truncateText(item.requestPayload, 300),
     responseBody: truncateText(item.responseBody, 500)
   }));
 
@@ -896,11 +674,20 @@ function buildAiPrompt(userPrompt, captures, mcpTools) {
   ].join("\n");
 }
 
+function updatePromptButtonState() {
+  const hasText = promptInput.value.trim().length > 0;
+  promptSendButton.disabled = !hasText || aiRunning;
+}
+
+function applyPromptFilter() {
+  filterQuery = String(promptInput.value || "").trim();
+  lastRenderSignature = "";
+  render();
+}
+
 async function runPromptWithAi() {
   const promptText = String(promptInput.value || "").trim();
-  if (!promptText) {
-    return;
-  }
+  if (!promptText) return;
 
   aiRunning = true;
   updatePromptButtonState();
@@ -959,18 +746,18 @@ async function runPromptWithAi() {
   }
 }
 
+// ─── Render ───────────────────────────────────────────────────────────────────
+
 function buildRenderSignature(totalCount, visibleCaptures) {
   const expandedState = Array.from(expandedIds).sort().join(",");
-  const itemSignature = visibleCaptures
-    .map((item) => {
-      const id = String(item.id || "");
-      const ts = String(item.timestamp || "");
-      const status = String(item.status || "");
-      const body = item.responseBody === null ? "null" : String(item.responseBody || "");
-      return `${id}|${ts}|${status}|${body.length}`;
-    })
-    .join(";");
-
+  const itemSignature = visibleCaptures.map((item) => {
+    const id = String(item.id || "");
+    const ts = String(item.timestamp || "");
+    const status = String(item.status || "");
+    const body = item.responseBody === null ? "null" : String(item.responseBody || "");
+    const payload = item.requestPayload === null ? "null" : String(item.requestPayload || "");
+    return `${id}|${ts}|${status}|${body.length}|${payload.length}`;
+  }).join(";");
   return `${filterQuery}__${totalCount}__${visibleCaptures.length}__${expandedState}__${itemSignature}`;
 }
 
@@ -979,10 +766,7 @@ async function render() {
   const visibleCaptures = captures.filter(matchesFilter);
   const signature = buildRenderSignature(captures.length, visibleCaptures);
 
-  if (signature === lastRenderSignature) {
-    return;
-  }
-
+  if (signature === lastRenderSignature) return;
   lastRenderSignature = signature;
 
   updateFilterInfo(captures.length, visibleCaptures.length);
@@ -990,14 +774,23 @@ async function render() {
   if (visibleCaptures.length === 0) {
     listElement.innerHTML = filterQuery
       ? '<div class="empty">No logs matched your filter.</div>'
-      : '<div class="empty">No captured logs in this tab yet.</div>';
+      : '<div class="empty">No captured logs in this tab yet.<br>Make sure DevTools is open while browsing.</div>';
     return;
   }
 
   listElement.innerHTML = visibleCaptures.map((item, index) => createItemMarkup(item, index)).join("");
 }
 
+function autoResizePrompt() {
+  if (!promptInput) return;
+  promptInput.style.height = "auto";
+  promptInput.style.height = `${Math.max(Math.min(promptInput.scrollHeight, 220), 96)}px`;
+}
+
+// ─── Event wiring ─────────────────────────────────────────────────────────────
+
 refreshButton.addEventListener("click", () => {
+  lastRenderSignature = "";
   render();
 });
 
@@ -1008,69 +801,65 @@ clearButton.addEventListener("click", async () => {
   render();
 });
 
-themeToggleButton.addEventListener("click", () => {
-  toggleTheme();
-});
-
-settingsButton.addEventListener("click", () => {
-  toggleSettingsPanel();
-});
+settingsButton.addEventListener("click", () => toggleSettingsPanel());
 
 document.addEventListener("click", (event) => {
-  if (!settingsOverlay.classList.contains("open")) {
-    return;
-  }
-
+  if (!settingsOverlay.classList.contains("open")) return;
   const path = typeof event.composedPath === "function" ? event.composedPath() : [];
-  const clickedInsideOverlay = path.includes(settingsOverlay);
-  const clickedSettingsButton = path.includes(settingsButton);
-
-  if (clickedInsideOverlay || clickedSettingsButton) {
-    return;
-  }
-
+  if (path.includes(settingsOverlay) || path.includes(settingsButton)) return;
   toggleSettingsPanel(false);
 });
 
 saveSettingsButton.addEventListener("click", async () => {
-  try {
-    await saveProviderConfig();
-  } catch (error) {
-    setSaveStatus(`Save failed: ${error.message}`, "err");
-  }
+  try { await saveProviderConfig(); } catch (error) { setSaveStatus(`Save failed: ${error.message}`, "err"); }
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    toggleSettingsPanel(false);
-    toggleMcpPanel(false);
-  }
+  if (event.key === "Escape") { toggleSettingsPanel(false); toggleMcpPanel(false); }
 });
 
-mcpButton?.addEventListener("click", () => {
-  toggleMcpPanel();
-});
-
-mcpRefreshButton?.addEventListener("click", () => {
-  refreshMcpTools();
-});
+mcpButton?.addEventListener("click", () => toggleMcpPanel());
+mcpRefreshButton?.addEventListener("click", () => refreshMcpTools());
 
 document.addEventListener("click", (event) => {
-  if (!mcpOverlay?.classList.contains("open")) {
-    return;
-  }
-
+  if (!mcpOverlay?.classList.contains("open")) return;
   const path = typeof event.composedPath === "function" ? event.composedPath() : [];
-  if (path.includes(mcpOverlay) || path.includes(mcpButton)) {
-    return;
-  }
-
+  if (path.includes(mcpOverlay) || path.includes(mcpButton)) return;
   toggleMcpPanel(false);
 });
 
-promptSendButton.addEventListener("click", () => {
-  runPromptWithAi();
+providerFields.addEventListener("click", async (event) => {
+  const target = event.target instanceof HTMLElement
+    ? event.target.closest("[data-gh-action]")
+    : null;
+  if (!(target instanceof HTMLElement)) return;
+  const action = target.getAttribute("data-gh-action");
+  if (action === "login") { await handleGitHubLogin(); return; }
+  if (action === "logout") { await handleGitHubLogout(); return; }
+  if (action === "open-verify") { await handleGitHubOpenVerify(); return; }
+  if (action === "copy-code") {
+    if (copilotDeviceFlowState?.userCode) {
+      await navigator.clipboard.writeText(copilotDeviceFlowState.userCode).catch(() => null);
+      setSaveStatus("Device code copied", "ok");
+    }
+    return;
+  }
+  if (action === "cancel-login") {
+    if (copilotDeviceFlowState) copilotDeviceFlowState.cancelled = true;
+    copilotDeviceFlowState = null;
+    setSaveStatus("Login cancelled", "");
+    await renderProviderFields();
+    return;
+  }
+  if (action === "refresh-models") {
+    const auth = await getGitHubAuth();
+    await refreshGitHubModelsFromAuth(auth);
+    setSaveStatus("Model list refreshed", "ok");
+    await renderProviderFields();
+  }
 });
+
+promptSendButton.addEventListener("click", () => runPromptWithAi());
 
 promptInput.addEventListener("input", () => {
   autoResizePrompt();
@@ -1084,14 +873,21 @@ promptInput.addEventListener("keydown", (event) => {
   }
 });
 
-initializeTheme();
-startCaptureSession();
-loadAiConfig().finally(() => {
-  render();
+// ─── Storage change listener (live update) ───────────────────────────────────
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes[STORAGE_KEY]) {
+    lastRenderSignature = "";
+    render();
+  }
 });
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+
+initializeTheme();
+loadAiConfig().finally(() => render());
 autoResizePrompt();
 updatePromptButtonState();
-setInterval(render, 2000);
 
 if (globalThis.MCPClient) {
   globalThis.MCPClient.loadCached().then(() => {
@@ -1099,7 +895,3 @@ if (globalThis.MCPClient) {
     globalThis.MCPClient.refreshAll().then(() => renderMcpPanel()).catch(() => null);
   });
 }
-
-window.addEventListener("beforeunload", () => {
-  stopCaptureSession();
-});

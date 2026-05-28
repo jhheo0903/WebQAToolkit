@@ -1,0 +1,608 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Net Error Trace</title>
+    <style>
+      :root {
+        --bg-a: #f8fafc;
+        --bg-b: #f8fafc;
+        --panel: #ffffff;
+        --surface2: #eef2f7;
+        --text: #1f2937;
+        --muted: #64748b;
+        --text3: #4e566a;
+        --line: #d1d5db;
+        --line-strong: #94a3b8;
+        --warning-bg: #fffbeb;
+        --warning-line: #f59e0b;
+        --warning-text: #92400e;
+        --error-bg: #fef2f2;
+        --error-line: #ef4444;
+        --error-text: #991b1b;
+        --accent: #6366f1;
+        --accent-strong: #818cf8;
+      }
+
+      :root[data-theme="dark"] {
+        --bg-a: #202124;
+        --bg-b: #202124;
+        --panel: #292a2d;
+        --surface2: #35363a;
+        --text: #e8eaed;
+        --muted: #9aa0a6;
+        --text3: #5f6368;
+        --line: #3c4043;
+        --line-strong: #5f6368;
+        --warning-bg: rgba(253, 214, 99, 0.1);
+        --warning-line: #fdd663;
+        --warning-text: #fdd663;
+        --error-bg: rgba(242, 139, 130, 0.1);
+        --error-line: #f28b82;
+        --error-text: #f28b82;
+        --accent: #8ab4f8;
+        --accent-strong: #aecbfa;
+      }
+
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        min-width: 360px;
+        overflow: hidden;
+        background: var(--bg-a);
+        color: var(--text);
+        font-family: "Segoe UI Variable", "Trebuchet MS", "Segoe UI", sans-serif;
+      }
+
+      .app {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .toolbar {
+        display: flex;
+        position: relative;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        padding: 0 12px;
+        height: 44px;
+        border-bottom: 1px solid var(--line);
+        flex-shrink: 0;
+        background: var(--panel);
+      }
+
+      .toolbarTitle {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .toolbarTitleMain {
+        font-size: 12px;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-weight: 600;
+        color: var(--accent-strong);
+        letter-spacing: -0.02em;
+      }
+
+      .header-status {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 10px;
+        color: var(--text3);
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        flex-shrink: 0;
+        margin-left: auto;
+      }
+
+      .status-indicator {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #16a34a;
+      }
+
+      .toolbarActions {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .actionBar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+        flex-shrink: 0;
+      }
+
+      .actionBarSpacer { flex: 1; }
+
+      .actionLabel {
+        font-size: 10px;
+        color: var(--muted);
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      button {
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        padding: 7px 11px;
+        font-size: 12px;
+        line-height: 1;
+        color: var(--text);
+        cursor: pointer;
+        background: var(--panel);
+        transition: all 0.18s ease;
+      }
+
+      button:hover {
+        background: #ffffff;
+        transform: translateY(-1px);
+        box-shadow: 0 5px 12px rgba(15, 23, 42, 0.08);
+      }
+
+      :root[data-theme="dark"] button { background: #35363a; color: var(--text); border-color: #5f6368; }
+      :root[data-theme="dark"] button:hover { background: #3c4043; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
+
+      .actionBtn {
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 11px;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      .actionBtnPrimary {
+        border-color: rgba(99, 102, 241, 0.25);
+        color: var(--accent-strong);
+        background: rgba(99, 102, 241, 0.08);
+      }
+
+      .iconButton {
+        width: 33px; min-width: 33px; height: 33px;
+        padding: 0; font-size: 15px;
+        display: inline-flex; align-items: center; justify-content: center;
+      }
+
+      .iconButton.active { border-color: var(--accent); color: var(--accent-strong); }
+
+      /* Settings overlay */
+      .settingsOverlay {
+        display: none;
+        position: absolute;
+        top: 44px; left: 0; right: 0;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+        padding: 10px 12px 12px;
+        gap: 9px;
+        z-index: 100;
+        opacity: 0;
+        transform: translateY(-8px);
+        pointer-events: none;
+        transition: opacity 0.2s ease, transform 0.2s ease;
+      }
+
+      .settingsOverlay.open {
+        display: grid; opacity: 1;
+        transform: translateY(0); pointer-events: auto;
+      }
+
+      .settings-inner { padding: 14px; }
+
+      .settingsTitle {
+        font-size: 10px; font-weight: 600; color: #4e566a;
+        letter-spacing: 0.08em; text-transform: uppercase;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      .providerTabs, .provider-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+
+      .provider-tab {
+        background: var(--surface2); border: 1px solid var(--line-strong);
+        border-radius: 8px; padding: 4px 10px; font-size: 11px;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-weight: 500; color: var(--muted);
+      }
+
+      .provider-tab.active {
+        border-color: rgba(99, 102, 241, 0.25);
+        color: var(--accent-strong); background: rgba(99, 102, 241, 0.08);
+      }
+
+      .provider-tab:hover { border-color: var(--accent-strong); }
+
+      .field-row {
+        display: grid; grid-template-columns: 82px 1fr;
+        align-items: center; margin: 5px 0;
+      }
+
+      .field-label { font-size: 11px; color: var(--muted); }
+
+      .field-input, .field-select {
+        border: 1px solid var(--line-strong); border-radius: 4px;
+        padding: 6px 8px; font-size: 11px; color: var(--text);
+        background: var(--surface2); outline: none;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      :root[data-theme="dark"] .field-input,
+      :root[data-theme="dark"] .field-select { background: #35363a; border-color: #5f6368; }
+
+      .settingsFooter { display: flex; align-items: center; gap: 8px; }
+
+      .saveStatus {
+        margin-right: auto; font-size: 10px; color: var(--muted);
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      .saveStatus.ok { color: #16a34a; }
+      .saveStatus.err { color: #dc2626; }
+
+      /* GitHub auth */
+      .ghAuthWrap {
+        border: 1px dashed var(--line-strong); border-radius: 8px;
+        padding: 8px; display: grid; margin: 5px 0;
+      }
+
+      .ghStatus { font-size: 11px; color: var(--muted); }
+      .ghStatus.ok { color: #16a34a; font-weight: 700; }
+      .ghCode { font-size: 19px; letter-spacing: 0.13em; font-weight: 700; color: var(--accent-strong); }
+      .ghActionsRow { display: flex; gap: 6px; flex-wrap: wrap; }
+
+      .ghButton {
+        border-radius: 4px; padding: 6px 9px; font-size: 11px;
+        font-weight: 700; background: var(--accent); color: #ffffff;
+        border: 1px solid var(--accent-strong);
+      }
+
+      .ghButton:hover { background: var(--accent-strong); color: #ffffff; border-color: var(--accent-strong); }
+
+      .ghButton.ghost {
+        background: var(--panel); color: var(--text); border-color: var(--line-strong);
+      }
+
+      .ghButton.ghost:hover { background: var(--surface2); }
+      .ghAuthWrap .ghButton[data-gh-action="login"] { margin-top: 8px; }
+      .ghHelp { font-size: 11px; color: var(--muted); }
+
+      /* MCP overlay */
+      .mcpOverlay {
+        display: none; position: absolute; top: 44px; left: 0; right: 0;
+        background: var(--panel); border-bottom: 1px solid var(--line);
+        padding: 10px 12px 12px; z-index: 100; opacity: 0;
+        transform: translateY(-8px); pointer-events: none;
+        transition: opacity 0.2s ease, transform 0.2s ease;
+        max-height: 340px; overflow-y: auto;
+      }
+
+      .mcpOverlay.open {
+        display: block; opacity: 1; transform: translateY(0); pointer-events: auto;
+      }
+
+      .mcpHead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+
+      .mcpServerItem {
+        border: 1px solid var(--line); border-radius: 8px;
+        padding: 8px 10px; margin-bottom: 6px; background: var(--surface2);
+      }
+
+      .mcpServerHeader { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+
+      .mcpStatusDot {
+        width: 6px; height: 6px; border-radius: 50%;
+        flex-shrink: 0; background: var(--line-strong);
+      }
+
+      .mcpStatusDot.ok { background: #16a34a; }
+      .mcpStatusDot.err { background: #dc2626; }
+
+      .mcpServerName {
+        font-size: 11px; font-weight: 600; color: var(--text);
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+
+      .mcpToolCount {
+        font-size: 10px; color: var(--muted); background: var(--panel);
+        border: 1px solid var(--line); border-radius: 10px; padding: 1px 7px;
+        flex-shrink: 0;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      .mcpToolList { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+
+      .mcpToolItem {
+        font-size: 10px; color: var(--muted);
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        padding: 2px 0 2px 12px; position: relative; line-height: 1.4;
+      }
+
+      .mcpToolItem::before { content: "•"; position: absolute; left: 2px; color: var(--accent); }
+      .mcpToolName { color: var(--text); font-weight: 500; }
+
+      .mcpErrorText {
+        font-size: 10px; color: #dc2626;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        margin-top: 2px; word-break: break-all;
+      }
+
+      :root[data-theme="dark"] .mcpErrorText { color: #f28b82; }
+
+      .mcpEmpty {
+        font-size: 11px; color: var(--muted); text-align: center;
+        padding: 14px 0;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      /* Log list */
+      .filterInfo {
+        font-size: 11px; color: var(--muted);
+        padding: 0 12px 8px; margin-top: 8px;
+        border-bottom: 1px solid var(--line); flex-shrink: 0;
+      }
+
+      .aiInfo {
+        display: none; margin: 8px 12px 0;
+        border: 1px solid var(--line); border-radius: 10px;
+        background: #ffffff; padding: 9px 10px;
+        font-size: 12px; line-height: 1.45; white-space: pre-wrap;
+      }
+
+      .aiInfo.show { display: block; }
+      :root[data-theme="dark"] .aiInfo { background: #292a2d; border-color: var(--line-strong); }
+
+      .list {
+        display: flex; flex-direction: column; gap: 8px;
+        flex: 1 1 auto; min-height: 0;
+        overflow-y: auto; overflow-x: hidden;
+        padding: 10px 12px;
+        overscroll-behavior: contain;
+      }
+
+      .list::-webkit-scrollbar { width: 9px; }
+      .list::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 999px; }
+      .list::-webkit-scrollbar-track { background: transparent; }
+
+      /* Item cards */
+      .item {
+        border: 1px solid var(--line); border-radius: 12px;
+        background: #ffffff; overflow: hidden; flex: 0 0 auto;
+        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.05);
+        animation: card-in 0.18s ease;
+      }
+
+      :root[data-theme="dark"] .item { background: #292a2d; border-color: var(--line); }
+      .item.warning { background: var(--warning-bg); border-color: var(--warning-line); }
+      .item.error { background: var(--error-bg); border-color: var(--error-line); }
+      .item.info { background: var(--bg-a); border-color: var(--line-strong); }
+
+      .summary {
+        width: 100%; border: 0; background: transparent;
+        text-align: left; display: block; padding: 11px;
+        cursor: pointer; line-height: 1.35;
+      }
+
+      .summary:hover { background: rgba(255, 255, 255, 0.5); }
+      :root[data-theme="dark"] .summary:hover { background: rgba(255, 255, 255, 0.04); }
+
+      .row {
+        display: flex; justify-content: space-between;
+        gap: 6px; align-items: center; margin-bottom: 4px;
+      }
+
+      .leftMeta { display: inline-flex; align-items: center; gap: 6px; }
+      .chevron { color: var(--muted); font-size: 13px; }
+
+      .badge {
+        font-size: 11px; font-weight: 700; border-radius: 999px;
+        padding: 2px 6px; border: 1px solid var(--line-strong);
+        background: #ffffff;
+      }
+
+      :root[data-theme="dark"] .badge { background: #35363a; }
+      .item.warning .badge { color: var(--warning-text); border-color: var(--warning-line); }
+      .item.error .badge { color: var(--error-text); border-color: var(--error-line); }
+
+      .method { font-size: 12px; font-weight: 800; letter-spacing: 0.02em; }
+
+      .url {
+        font-size: 12px; color: var(--text);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+
+      .meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+      /* Expandable detail body with tabs */
+      .body {
+        display: none; border-top: 1px dashed var(--line-strong);
+        background: #ffffff;
+      }
+
+      :root[data-theme="dark"] .body { background: #202124; }
+      .body.open { display: block; }
+
+      .bodyTabs {
+        display: flex; gap: 0;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface2);
+      }
+
+      .bodyTab {
+        border: none; border-radius: 0; background: transparent;
+        padding: 6px 12px; font-size: 11px; color: var(--muted);
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        cursor: pointer; border-bottom: 2px solid transparent;
+        transition: none; box-shadow: none; transform: none;
+      }
+
+      .bodyTab:hover { background: var(--panel); transform: none; box-shadow: none; }
+      .bodyTab.active { color: var(--accent-strong); border-bottom-color: var(--accent); background: var(--panel); }
+
+      .bodyPane { display: none; padding: 10px 11px; }
+      .bodyPane.active { display: block; }
+
+      pre {
+        margin: 0; white-space: pre-wrap; word-break: break-word;
+        font-size: 12px;
+        font-family: "Consolas", "Courier New", monospace;
+      }
+
+      .headerTable {
+        width: 100%; border-collapse: collapse; font-size: 11px;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      .headerTable td {
+        padding: 3px 6px; vertical-align: top;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .headerTable td:first-child { color: var(--muted); width: 40%; word-break: break-all; }
+      .headerTable td:last-child { color: var(--text); word-break: break-all; }
+
+      .timingRow {
+        display: flex; justify-content: space-between;
+        font-size: 11px; padding: 3px 0;
+        font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .timingLabel { color: var(--muted); }
+      .timingValue { color: var(--text); font-weight: 600; }
+
+      .empty {
+        border: 1px dashed var(--line-strong); border-radius: 12px;
+        padding: 20px; color: var(--muted); font-size: 13px;
+        text-align: center; background: #ffffff;
+      }
+
+      :root[data-theme="dark"] .empty { background: #292a2d; }
+
+      /* Prompt dock */
+      .promptDock {
+        border-top: 1px solid var(--line); background: var(--panel);
+        padding: 10px 12px 12px; display: grid; gap: 6px; flex-shrink: 0;
+      }
+
+      .composerHint { font-size: 11px; color: var(--muted); letter-spacing: 0.01em; }
+
+      .composer {
+        border: 1px solid var(--line-strong); border-radius: 8px;
+        display: flex; align-items: flex-end; gap: 8px;
+        padding: 8px 8px 8px 10px; background: var(--panel);
+      }
+
+      :root[data-theme="dark"] .composer { background: #35363a; border-color: var(--line-strong); }
+
+      .promptInput {
+        flex: 1; min-width: 0; border: none; border-radius: 8px;
+        padding: 2px; font-size: 13px; outline: none; resize: none;
+        line-height: 1.5; min-height: 96px; max-height: 220px;
+        font-family: "Segoe UI Variable", "Trebuchet MS", "Segoe UI", sans-serif;
+        background: transparent; color: var(--text);
+      }
+
+      :root[data-theme="dark"] .promptInput::placeholder { color: #9aa0a6; }
+      :root[data-theme="dark"] .list::-webkit-scrollbar-thumb { background: #5f6368; }
+
+      .promptButton {
+        border: none; border-radius: 6px; width: 30px; min-width: 30px;
+        height: 30px; padding: 0; display: inline-flex;
+        align-items: center; justify-content: center;
+        background: var(--accent); font-size: 16px; font-weight: 900;
+        line-height: 1; color: #ffffff; cursor: pointer;
+      }
+
+      .promptButton:hover { background: var(--accent-strong); }
+
+      .promptButton:disabled { color: #ffffff; cursor: not-allowed; background: #64748b; }
+
+      @keyframes card-in {
+        from { opacity: 0; transform: translateY(4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div id="toolbar" class="toolbar">
+        <div class="toolbarTitle">
+          <span class="toolbarTitleMain">Net Error Trace</span>
+        </div>
+        <div class="header-status">
+          <span class="status-indicator"></span>
+          <span id="statusText">recording</span>
+        </div>
+        <div class="toolbarActions">
+          <button id="mcpButton" class="iconButton" type="button" aria-label="MCP servers">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="6" y="3" width="12" height="10" rx="2"/>
+              <line x1="10" y1="3" x2="10" y2="1"/>
+              <line x1="14" y1="3" x2="14" y2="1"/>
+              <path d="M12 13v8"/>
+              <path d="M8 17h8"/>
+            </svg>
+          </button>
+          <button id="settingsButton" class="iconButton" type="button" aria-label="AI settings">⚙</button>
+        </div>
+      </div>
+
+      <div class="actionBar">
+        <span class="actionLabel">Panel Controls</span>
+        <span class="actionBarSpacer"></span>
+        <button id="refreshButton" class="actionBtn" type="button">Refresh</button>
+        <button id="clearButton" class="actionBtn" type="button">Clear All</button>
+      </div>
+
+      <section id="settingsOverlay" class="settingsOverlay" aria-label="AI settings panel">
+        <div class="settings-inner">
+          <div class="settingsTitle">AI Settings</div>
+          <div id="providerTabs" class="provider-tabs"></div>
+          <div id="providerFields" class="fields"></div>
+          <div class="settingsFooter">
+            <span id="saveStatus" class="saveStatus"></span>
+            <button id="saveSettingsButton" class="actionBtn actionBtnPrimary" type="button">Save</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="mcpOverlay" class="mcpOverlay" aria-label="MCP servers panel">
+        <div class="mcpHead">
+          <span class="settingsTitle">MCP Servers</span>
+          <button id="mcpRefreshButton" class="actionBtn" type="button">Refresh</button>
+        </div>
+        <div id="mcpServerList"></div>
+      </section>
+
+      <div id="filterInfo" class="filterInfo">Current tab logs: 0</div>
+      <div id="aiInfo" class="aiInfo"></div>
+      <div id="list" class="list"></div>
+
+      <div id="promptDock" class="promptDock">
+        <div class="composerHint">Prompt to AI for log analysis/filtering. Enter to run, Shift+Enter for newline.</div>
+        <div class="composer">
+          <textarea
+            id="promptInput"
+            class="promptInput"
+            rows="4"
+            placeholder="e.g. Find likely root cause of repeated 500 errors on payment API"
+          ></textarea>
+          <button id="promptSendButton" class="promptButton" type="button" aria-label="Run AI prompt">↑</button>
+        </div>
+      </div>
+    </div>
+    <script src="providers.js"></script>
+    <script src="mcp.js"></script>
+    <script src="panel.js"></script>
+  </body>
+</html>

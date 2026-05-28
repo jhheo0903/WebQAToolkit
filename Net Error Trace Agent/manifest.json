@@ -1,18 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Network Error Live Monitor",
-  "description": "Capture 4xx/5xx network responses and inspect JSON error payloads in real time.",
-  "version": "1.0.0",
-  "permissions": ["webRequest", "storage", "activeTab", "sidePanel", "tabs"],
+  "description": "Capture network requests and inspect payloads in real time via DevTools panel.",
+  "version": "2.0.0",
+  "permissions": ["storage", "tabs"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
   },
-  "side_panel": {
-    "default_path": "popup.html"
-  },
+  "devtools_page": "devtools.html",
   "action": {
-    "default_title": "Open Network Error Panel"
+    "default_title": "Open Network Error DevTools Panel"
   },
   "web_accessible_resources": [
     {
