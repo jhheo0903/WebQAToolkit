@@ -2,6 +2,7 @@ const STORAGE_KEY = "capturedErrors";
 const PROVIDER_CONFIGS_KEY = "providerConfigs";
 const SELECTED_PROVIDER_KEY = "selectedProvider";
 const GITHUB_AUTH_KEY = "githubCopilotAuth";
+const CAPTURE_FILTER_KEY = "captureStatusFilter";
 
 const listElement = document.getElementById("list");
 const refreshButton = document.getElementById("refreshButton");
@@ -23,6 +24,7 @@ const aiInfo = document.getElementById("aiInfo");
 
 let filterQuery = "";
 const expandedIds = new Set();
+const selectedIds = new Set();
 const activeBodyTab = {};
 let lastRenderSignature = "";
 let currentProvider = "openai";
@@ -93,12 +95,35 @@ function setSaveStatus(message, type) {
   saveStatus.className = type ? `saveStatus ${type}` : "saveStatus";
 }
 
-function setAiInfo(message) {
+// ─── Chat history ─────────────────────────────────────────────────────────────
+
+const chatHistory = [];
+
+function appendChatMessage(role, text, meta) {
+  chatHistory.push({ role, text, meta });
+  renderChatHistory();
+}
+
+function renderChatHistory() {
   if (!aiInfo) return;
-  const text = String(message || "").trim();
-  if (!text) { aiInfo.textContent = ""; aiInfo.classList.remove("show"); return; }
-  aiInfo.textContent = text;
-  aiInfo.classList.add("show");
+  if (chatHistory.length === 0) {
+    aiInfo.innerHTML = '<div class="chatEmpty">로그를 선택하면 AI가 분석합니다.<br>선택 없이 입력하면 자유 대화가 가능합니다.</div>';
+    return;
+  }
+  aiInfo.innerHTML = chatHistory.map(({ role, text, meta }) => {
+    const roleLabel = role === "user" ? "You" : escapeHtml(meta?.provider || "AI");
+    const roleClass = role === "user" ? "chatUser" : "chatAi";
+    const metaHtml = meta?.usage
+      ? `<span class="chatMeta">Tokens in/out: ${meta.usage.input} / ${meta.usage.output}</span>`
+      : "";
+    return `
+      <div class="chatMsg ${roleClass}">
+        <span class="chatRole">${roleLabel}</span>
+        <pre class="chatText">${escapeHtml(text)}</pre>
+        ${metaHtml}
+      </div>`;
+  }).join("");
+  aiInfo.scrollTop = aiInfo.scrollHeight;
 }
 
 // ─── Overlays ────────────────────────────────────────────────────────────────
@@ -522,6 +547,7 @@ function createItemMarkup(item, index) {
   const urlLabel = escapeHtml(item.url || "Unknown URL");
   const timeLabel = escapeHtml(formatTimestamp(item.timestamp));
   const isOpen = expandedIds.has(String(item.id || index));
+  const isSelected = selectedIds.has(String(item.id || index));
   const currentTab = activeBodyTab[id] || "response";
   const chevron = isOpen ? "▾" : "▸";
 
@@ -558,10 +584,13 @@ function createItemMarkup(item, index) {
     </div>`;
 
   return `
-    <article class="item ${statusClass}" data-index="${index}">
+    <article class="item ${statusClass}${isSelected ? " selected" : ""}" data-index="${index}">
       <button class="summary" data-toggle-id="${id}" type="button">
         <div class="row">
           <span class="leftMeta">
+            <label class="selectCheck" title="컨텍스트로 선택">
+              <input type="checkbox" class="itemCheckbox" data-select-id="${id}"${isSelected ? " checked" : ""}>
+            </label>
             <span class="badge">${statusLabel}</span>
             <span class="method">${methodLabel}</span>
           </span>
@@ -579,44 +608,61 @@ function createItemMarkup(item, index) {
 
 // ─── List events ──────────────────────────────────────────────────────────────
 
+function updateSelectionBadge() {
+  const badge = document.getElementById("selectionBadge");
+  if (!badge) return;
+  const count = selectedIds.size;
+  badge.textContent = count > 0 ? `${count}개 선택됨 · 컨텍스트로 사용` : "";
+  badge.classList.toggle("show", count > 0);
+}
+
+function handleItemCheckbox(event, checkbox) {
+  event.stopPropagation();
+  const captureId = checkbox.dataset.selectId;
+  if (!captureId) return;
+  selectedIds[checkbox.checked ? "add" : "delete"](captureId);
+  checkbox.closest("article.item")?.classList.toggle("selected", checkbox.checked);
+  updateSelectionBadge();
+}
+
+function handleTabSwitch(tabBtn) {
+  const { tabId, tabKey } = tabBtn.dataset;
+  if (!tabId || !tabKey) return;
+  activeBodyTab[tabId] = tabKey;
+  const body = listElement.querySelector(`[data-body-id="${CSS.escape(tabId)}"]`);
+  if (!body) return;
+  body.querySelectorAll(".bodyTab").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.tabKey === tabKey);
+  });
+  body.querySelectorAll(".bodyPane").forEach((pane) => {
+    pane.classList.toggle("active", pane.dataset.paneKey === tabKey);
+  });
+}
+
+function handleToggleExpand(toggleBtn) {
+  const captureId = toggleBtn.dataset.toggleId;
+  if (!captureId) return;
+  if (expandedIds.has(captureId)) {
+    expandedIds.delete(captureId);
+  } else {
+    expandedIds.add(captureId);
+  }
+  lastRenderSignature = "";
+  render();
+}
+
 listElement.addEventListener("click", (event) => {
   const target = event.target instanceof HTMLElement ? event.target : null;
   if (!target) return;
 
-  // Tab switch
-  const tabBtn = target.closest("[data-tab-id]");
-  if (tabBtn instanceof HTMLElement) {
-    const tabId = tabBtn.getAttribute("data-tab-id");
-    const tabKey = tabBtn.getAttribute("data-tab-key");
-    if (tabId && tabKey) {
-      activeBodyTab[tabId] = tabKey;
-      // Toggle pane visibility without full re-render
-      const body = listElement.querySelector(`[data-body-id="${CSS.escape(tabId)}"]`);
-      if (body) {
-        body.querySelectorAll(".bodyTab").forEach((btn) => {
-          btn.classList.toggle("active", btn.getAttribute("data-tab-key") === tabKey);
-        });
-        body.querySelectorAll(".bodyPane").forEach((pane) => {
-          pane.classList.toggle("active", pane.getAttribute("data-pane-key") === tabKey);
-        });
-      }
-    }
-    return;
-  }
+  const checkbox = target.closest(".itemCheckbox");
+  if (checkbox instanceof HTMLInputElement) { handleItemCheckbox(event, checkbox); return; }
 
-  // Toggle expand
+  const tabBtn = target.closest("[data-tab-id]");
+  if (tabBtn instanceof HTMLElement) { handleTabSwitch(tabBtn); return; }
+
   const toggleBtn = target.closest("[data-toggle-id]");
-  if (toggleBtn instanceof HTMLElement) {
-    const captureId = toggleBtn.getAttribute("data-toggle-id");
-    if (!captureId) return;
-    if (expandedIds.has(captureId)) {
-      expandedIds.delete(captureId);
-    } else {
-      expandedIds.add(captureId);
-    }
-    lastRenderSignature = "";
-    render();
-  }
+  if (toggleBtn instanceof HTMLElement) { handleToggleExpand(toggleBtn); }
 });
 
 // ─── Data loading ─────────────────────────────────────────────────────────────
@@ -636,8 +682,8 @@ async function loadCaptures() {
 
 // ─── AI analysis ─────────────────────────────────────────────────────────────
 
-function buildAiPrompt(userPrompt, captures, mcpTools) {
-  const compactLogs = captures.slice(0, 35).map((item, index) => ({
+function compactLog(item, index) {
+  return {
     idx: index + 1,
     id: item.id,
     method: item.method,
@@ -646,15 +692,17 @@ function buildAiPrompt(userPrompt, captures, mcpTools) {
     timestamp: item.timestamp,
     requestPayload: truncateText(item.requestPayload, 300),
     responseBody: truncateText(item.responseBody, 500)
-  }));
+  };
+}
 
+function buildLogAnalysisPrompt(userPrompt, selectedLogs, mcpTools, mcpContext) {
   const toolsContext = mcpTools?.length
     ? ["\n" + globalThis.MCPClient.buildContextString(mcpTools)]
     : [];
 
   return [
     "You are a network error analyst.",
-    "Read the logs and user request, then return ONLY valid JSON.",
+    "Read the selected logs and user request, then return ONLY valid JSON.",
     "JSON schema:",
     "{",
     "  \"summary\": \"short Korean explanation\",",
@@ -666,12 +714,16 @@ function buildAiPrompt(userPrompt, captures, mcpTools) {
     "- filter_query should be useful with simple text contains matching.",
     "- actions should be 0~3 concrete next debugging steps.",
     ...toolsContext,
+    mcpContext || "",
     "",
     `User request: ${userPrompt}`,
-    `Total logs: ${captures.length}`,
-    "Logs (latest first, truncated):",
-    JSON.stringify(compactLogs, null, 2)
-  ].join("\n");
+    `Selected logs (${selectedLogs.length}):`,
+    JSON.stringify(selectedLogs.map(compactLog), null, 2)
+  ].filter(Boolean).join("\n");
+}
+
+function findServerEntry(serverId) {
+  return globalThis.MCPClient?._cache?.[serverId] || null;
 }
 
 function updatePromptButtonState() {
@@ -679,11 +731,106 @@ function updatePromptButtonState() {
   promptSendButton.disabled = !hasText || aiRunning;
 }
 
-function applyPromptFilter() {
-  filterQuery = String(promptInput.value || "").trim();
-  lastRenderSignature = "";
-  render();
+async function validateProviderConfig() {
+  const config = providerConfigs[currentProvider] || {};
+  if (currentProvider === "github_copilot") {
+    const githubAuth = await getGitHubAuth();
+    if (!isGitHubLoggedIn(githubAuth)) {
+      return "GitHub Copilot 로그인이 필요합니다. 톱니바퀴 > GitHub Copilot > Login with GitHub";
+    }
+  } else if (!isProviderConfigured(currentProvider, config)) {
+    return "AI 설정이 저장되지 않았습니다. 톱니바퀴에서 API 설정 후 Save 해주세요.";
+  }
+  return null;
 }
+
+function buildToolDecisionPrompt(userPrompt, mcpTools, logContext, toolResultContext) {
+  const toolList = mcpTools.map((t) => {
+    const params = t.inputSchema?.properties
+      ? Object.entries(t.inputSchema.properties)
+          .map(([k, v]) => `  ${k}(${v.type || "any"})${t.inputSchema.required?.includes(k) ? "*" : ""}: ${v.description || ""}`)
+          .join("\n")
+      : "";
+    return `server_id="${t._serverId}" tool="${t.name}"\n  ${t.description || ""}${params ? "\n" + params : ""}`;
+  }).join("\n\n");
+
+  return [
+    "You are a tool-use decision engine. Respond with ONLY valid JSON, nothing else.",
+    "",
+    "If a tool should be called next, respond:",
+    '{"action":"call_tool","server_id":"...","tool":"...","args":{...}}',
+    "",
+    "If enough context exists to answer the user, respond:",
+    '{"action":"answer","text":"...Korean answer here..."}',
+    "",
+    mcpTools.length ? `Available tools:\n${toolList}` : "",
+    logContext ? `\nLog context:\n${logContext}` : "",
+    toolResultContext ? `\nPrevious tool results:\n${toolResultContext}` : "",
+    "",
+    `User request: ${userPrompt}`
+  ].filter(Boolean).join("\n");
+}
+
+async function runAgenticLoop(promptText, config, mcpTools, logContext) {
+  const MAX_ROUNDS = 5;
+  const providerLabel = getProviderLabel(currentProvider);
+  let toolResultContext = "";
+  let totalUsage = { input: 0, output: 0 };
+
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const decisionPrompt = buildToolDecisionPrompt(promptText, mcpTools, logContext, toolResultContext);
+    const { result, usage } = await globalThis.AIProviders.callAI(currentProvider, config, decisionPrompt);
+    totalUsage.input += Number(usage?.input || 0);
+    totalUsage.output += Number(usage?.output || 0);
+
+    if (result?.action === "answer") {
+      appendChatMessage("ai", String(result.text || "응답이 비어 있습니다."), {
+        provider: providerLabel,
+        usage: totalUsage
+      });
+      return;
+    }
+
+    if (result?.action === "call_tool") {
+      const entry = findServerEntry(result.server_id);
+      if (!entry) {
+        appendChatMessage("ai", `MCP 서버를 찾을 수 없습니다: ${result.server_id}`, { provider: providerLabel });
+        return;
+      }
+
+      appendChatMessage("ai", `🔧 ${entry.server.name} · ${result.tool}(${JSON.stringify(result.args || {})}) 호출 중...`, { provider: providerLabel });
+
+      let toolResult;
+      try {
+        toolResult = await globalThis.MCPClient.callTool(entry.server, result.tool, result.args || {});
+      } catch (err) {
+        appendChatMessage("ai", `도구 호출 실패: ${err.message}`, { provider: providerLabel });
+        return;
+      }
+
+      const resultText = typeof toolResult === "string" ? toolResult : JSON.stringify(toolResult, null, 2);
+      toolResultContext += `\n[${result.tool}] 결과:\n${resultText.slice(0, 4000)}\n`;
+      continue;
+    }
+
+    // action이 없거나 알 수 없는 경우 — raw text로 표시
+    const fallback = typeof result === "string" ? result : JSON.stringify(result);
+    appendChatMessage("ai", fallback || "응답을 파싱할 수 없습니다.", { provider: providerLabel, usage: totalUsage });
+    return;
+  }
+
+  appendChatMessage("ai", "도구 호출이 너무 많이 반복되어 중단했습니다.", { provider: providerLabel });
+}
+
+async function runLogAnalysis(promptText, selectedLogs, config, mcpTools) {
+  const logContext = JSON.stringify(selectedLogs.map(compactLog), null, 2);
+  await runAgenticLoop(promptText, config, mcpTools, logContext);
+}
+
+async function runChat(promptText, config, mcpTools) {
+  await runAgenticLoop(promptText, config, mcpTools, null);
+}
+
 
 async function runPromptWithAi() {
   const promptText = String(promptInput.value || "").trim();
@@ -691,55 +838,31 @@ async function runPromptWithAi() {
 
   aiRunning = true;
   updatePromptButtonState();
-  setAiInfo("AI analyzing logs...");
 
   try {
-    const captures = await loadCaptures();
-    if (captures.length === 0) {
-      filterQuery = "";
-      lastRenderSignature = "";
-      await render();
-      setAiInfo("분석할 로그가 없습니다.");
-      return;
-    }
+    const validationError = await validateProviderConfig();
+    if (validationError) { appendChatMessage("ai", validationError, {}); return; }
 
     const config = providerConfigs[currentProvider] || {};
-    if (currentProvider === "github_copilot") {
-      const githubAuth = await getGitHubAuth();
-      if (!isGitHubLoggedIn(githubAuth)) {
-        applyPromptFilter();
-        setAiInfo("GitHub Copilot 로그인이 필요합니다. 톱니바퀴 > GitHub Copilot > Login with GitHub");
-        return;
-      }
-    }
-
-    if (!isProviderConfigured(currentProvider, config)) {
-      applyPromptFilter();
-      setAiInfo("AI 설정이 저장되지 않아 일반 필터로 동작했습니다. 톱니바퀴에서 API 설정 후 Save 해주세요.");
-      return;
-    }
-
     const mcpTools = await globalThis.MCPClient?.getAllTools().catch(() => []) || [];
-    const aiPrompt = buildAiPrompt(promptText, captures, mcpTools);
-    const { result, usage } = await globalThis.AIProviders.callAI(currentProvider, config, aiPrompt);
+    const allCaptures = await loadCaptures();
+    const selectedLogs = allCaptures.filter((item) => selectedIds.has(String(item.id)));
 
-    const summary = String(result?.summary || "").trim();
-    const suggestedFilter = String(result?.filter_query || "").trim();
-    const actions = parseResultToArray(result?.actions).slice(0, 3);
-    const providerLabel = getProviderLabel(currentProvider);
+    appendChatMessage("user", selectedLogs.length > 0
+      ? `[로그 ${selectedLogs.length}개 선택] ${promptText}`
+      : promptText
+    );
+    promptInput.value = "";
+    autoResizePrompt();
+    updatePromptButtonState();
 
-    filterQuery = suggestedFilter || promptText;
-    lastRenderSignature = "";
-    await render();
-
-    const usageText = usage
-      ? `Tokens in/out: ${Number(usage.input || 0)} / ${Number(usage.output || 0)}`
-      : "";
-    const actionText = actions.length ? `\nNext:\n- ${actions.join("\n- ")}` : "";
-    setAiInfo(`[${providerLabel}] ${summary || "분석은 완료됐지만 summary가 비어 있습니다."}${usageText ? `\n${usageText}` : ""}${actionText}`);
+    if (selectedLogs.length > 0) {
+      await runLogAnalysis(promptText, selectedLogs, config, mcpTools);
+    } else {
+      await runChat(promptText, config, mcpTools);
+    }
   } catch (error) {
-    applyPromptFilter();
-    setAiInfo(`AI 실행 실패: ${error.message}\n일반 필터로 동작했습니다.`);
+    appendChatMessage("ai", `AI 실행 실패: ${error.message}`, {});
   } finally {
     aiRunning = false;
     updatePromptButtonState();
@@ -750,6 +873,7 @@ async function runPromptWithAi() {
 
 function buildRenderSignature(totalCount, visibleCaptures) {
   const expandedState = Array.from(expandedIds).sort().join(",");
+  const selectedState = Array.from(selectedIds).sort().join(",");
   const itemSignature = visibleCaptures.map((item) => {
     const id = String(item.id || "");
     const ts = String(item.timestamp || "");
@@ -758,33 +882,49 @@ function buildRenderSignature(totalCount, visibleCaptures) {
     const payload = item.requestPayload === null ? "null" : String(item.requestPayload || "");
     return `${id}|${ts}|${status}|${body.length}|${payload.length}`;
   }).join(";");
-  return `${filterQuery}__${totalCount}__${visibleCaptures.length}__${expandedState}__${itemSignature}`;
+  return `${filterQuery}__${totalCount}__${visibleCaptures.length}__${expandedState}__${selectedState}__${itemSignature}`;
 }
 
+let renderPending = false;
+let renderQueued = false;
+
 async function render() {
-  const captures = await loadCaptures();
-  const visibleCaptures = captures.filter(matchesFilter);
-  const signature = buildRenderSignature(captures.length, visibleCaptures);
-
-  if (signature === lastRenderSignature) return;
-  lastRenderSignature = signature;
-
-  updateFilterInfo(captures.length, visibleCaptures.length);
-
-  if (visibleCaptures.length === 0) {
-    listElement.innerHTML = filterQuery
-      ? '<div class="empty">No logs matched your filter.</div>'
-      : '<div class="empty">No captured logs in this tab yet.<br>Make sure DevTools is open while browsing.</div>';
+  if (renderPending) {
+    renderQueued = true;
     return;
   }
+  renderPending = true;
+  try {
+    const captures = await loadCaptures();
+    const visibleCaptures = captures.filter(matchesFilter);
+    const signature = buildRenderSignature(captures.length, visibleCaptures);
 
-  listElement.innerHTML = visibleCaptures.map((item, index) => createItemMarkup(item, index)).join("");
+    if (signature !== lastRenderSignature) {
+      lastRenderSignature = signature;
+      updateFilterInfo(captures.length, visibleCaptures.length);
+
+      if (visibleCaptures.length === 0) {
+        listElement.innerHTML = filterQuery
+          ? '<div class="empty">No logs matched your filter.</div>'
+          : '<div class="empty">No captured logs in this tab yet.<br>Make sure DevTools is open while browsing.</div>';
+      } else {
+        listElement.innerHTML = visibleCaptures.map((item, index) => createItemMarkup(item, index)).join("");
+        updateSelectionBadge();
+      }
+    }
+  } finally {
+    renderPending = false;
+    if (renderQueued) {
+      renderQueued = false;
+      render();
+    }
+  }
 }
 
 function autoResizePrompt() {
   if (!promptInput) return;
   promptInput.style.height = "auto";
-  promptInput.style.height = `${Math.max(Math.min(promptInput.scrollHeight, 220), 96)}px`;
+  promptInput.style.height = `${Math.max(Math.min(promptInput.scrollHeight, 140), 60)}px`;
 }
 
 // ─── Event wiring ─────────────────────────────────────────────────────────────
@@ -833,7 +973,7 @@ providerFields.addEventListener("click", async (event) => {
     ? event.target.closest("[data-gh-action]")
     : null;
   if (!(target instanceof HTMLElement)) return;
-  const action = target.getAttribute("data-gh-action");
+  const action = target.dataset.ghAction;
   if (action === "login") { await handleGitHubLogin(); return; }
   if (action === "logout") { await handleGitHubLogout(); return; }
   if (action === "open-verify") { await handleGitHubOpenVerify(); return; }
@@ -882,10 +1022,57 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
+// ─── Status capture filter ────────────────────────────────────────────────────
+
+const STATUS_RANGES = ["2xx", "3xx", "4xx", "5xx"];
+
+function getActiveRanges() {
+  return STATUS_RANGES.filter((range) => {
+    const chip = document.getElementById(`chip-${range}`);
+    return chip?.querySelector("input")?.checked;
+  });
+}
+
+function applyChipActiveClass(range, checked) {
+  const chip = document.getElementById(`chip-${range}`);
+  if (!chip) return;
+  chip.classList.toggle(`active-${range}`, checked);
+}
+
+async function saveCaptureFilter() {
+  const ranges = getActiveRanges();
+  await chrome.storage.local.set({ [CAPTURE_FILTER_KEY]: ranges });
+}
+
+async function loadCaptureFilter() {
+  const result = await chrome.storage.local.get(CAPTURE_FILTER_KEY);
+  const ranges = Array.isArray(result[CAPTURE_FILTER_KEY]) && result[CAPTURE_FILTER_KEY].length > 0
+    ? result[CAPTURE_FILTER_KEY]
+    : ["5xx"];
+
+  STATUS_RANGES.forEach((range) => {
+    const chip = document.getElementById(`chip-${range}`);
+    if (!chip) return;
+    const checkbox = chip.querySelector("input");
+    const checked = ranges.includes(range);
+    if (checkbox) checkbox.checked = checked;
+    applyChipActiveClass(range, checked);
+  });
+}
+
+document.querySelector(".statusFilterBar")?.addEventListener("change", async (event) => {
+  const checkbox = event.target instanceof HTMLInputElement ? event.target : null;
+  if (!checkbox) return;
+  const range = checkbox.value;
+  applyChipActiveClass(range, checkbox.checked);
+  await saveCaptureFilter();
+});
+
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
 initializeTheme();
 loadAiConfig().finally(() => render());
+await loadCaptureFilter();
 autoResizePrompt();
 updatePromptButtonState();
 

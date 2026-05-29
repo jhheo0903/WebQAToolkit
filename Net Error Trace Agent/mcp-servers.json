@@ -5,6 +5,12 @@
       "name": "Microsoft Learn",
       "type": "http",
       "url": "https://learn.microsoft.com/api/mcp"
+    },
+    {
+      "id": "azure-devops-server",
+      "name": "Azure DevOps Server",
+      "type": "http",
+      "url": "http://localhost:8080/mcp"
     }
   ]
 }

@@ -81,7 +81,7 @@ function extractJson(text) {
   try {
     return JSON.parse(cleaned);
   } catch {
-    const match = cleaned.match(/\{[\s\S]*\}/);
+    const match = /\{[\s\S]*\}/.exec(cleaned);
     if (!match) {
       throw new Error(`JSON parse failed: ${cleaned.slice(0, 160)}`);
     }
@@ -101,45 +101,35 @@ function normalizeUsage(rawUsage) {
   };
 }
 
-async function callOpenAI(config, prompt) {
-  if (!config.apiKey) {
-    throw new Error("OpenAI API key is missing");
-  }
+const SYSTEM_JSON = "You are a network error analysis assistant. Always return valid JSON only.";
+const SYSTEM_CHAT = "You are a helpful assistant for web developers and QA engineers. Answer in Korean. Be concise and practical.";
 
+async function callOpenAI(config, prompt, systemPrompt) {
+  if (!config.apiKey) throw new Error("OpenAI API key is missing");
+  const isJson = !systemPrompt || systemPrompt === SYSTEM_JSON;
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`
-    },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
     body: JSON.stringify({
       model: config.model || "gpt-4o",
       temperature: 0.2,
-      response_format: { type: "json_object" },
+      ...(isJson ? { response_format: { type: "json_object" } } : {}),
       messages: [
-        { role: "system", content: "You are a network error analysis assistant. Always return valid JSON only." },
+        { role: "system", content: systemPrompt || SYSTEM_JSON },
         { role: "user", content: prompt }
       ]
     })
   });
-
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(`OpenAI ${response.status}: ${err.error?.message || response.statusText}`);
   }
-
   const data = await response.json();
-  return {
-    text: data.choices?.[0]?.message?.content || "",
-    usage: normalizeUsage(data.usage)
-  };
+  return { text: data.choices?.[0]?.message?.content || "", usage: normalizeUsage(data.usage) };
 }
 
-async function callClaude(config, prompt) {
-  if (!config.apiKey) {
-    throw new Error("Claude API key is missing");
-  }
-
+async function callClaude(config, prompt, systemPrompt) {
+  if (!config.apiKey) throw new Error("Claude API key is missing");
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -150,49 +140,38 @@ async function callClaude(config, prompt) {
     },
     body: JSON.stringify({
       model: config.model || "claude-sonnet-4-5",
-      max_tokens: 900,
       messages: [{ role: "user", content: prompt }],
-      system: "You are a network error analysis assistant. Always return valid JSON only."
+      system: systemPrompt || SYSTEM_JSON
     })
   });
-
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(`Claude ${response.status}: ${err.error?.message || response.statusText}`);
   }
-
   const data = await response.json();
-  return {
-    text: data.content?.[0]?.text || "",
-    usage: normalizeUsage(data.usage)
-  };
+  return { text: data.content?.[0]?.text || "", usage: normalizeUsage(data.usage) };
 }
 
-async function callAzureOpenAI(config, prompt) {
+async function callAzureOpenAI(config, prompt, systemPrompt) {
   const endpoint = String(config.endpoint || "").replace(/\/$/, "");
   const deployment = String(config.deployment || "");
   const apiVersion = String(config.apiVersion || "2024-02-01");
-
   if (!endpoint || !deployment || !config.apiKey) {
     throw new Error("Azure OpenAI requires endpoint, deployment and API key");
   }
-
+  const isJson = !systemPrompt || systemPrompt === SYSTEM_JSON;
   const response = await fetch(`${endpoint}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "api-key": config.apiKey
-    },
+    headers: { "Content-Type": "application/json", "api-key": config.apiKey },
     body: JSON.stringify({
       temperature: 0.2,
-      response_format: { type: "json_object" },
+      ...(isJson ? { response_format: { type: "json_object" } } : {}),
       messages: [
-        { role: "system", content: "You are a network error analysis assistant. Always return valid JSON only." },
+        { role: "system", content: systemPrompt || SYSTEM_JSON },
         { role: "user", content: prompt }
       ]
     })
   });
-
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(`Azure OpenAI ${response.status}: ${err.error?.message || response.statusText}`);
@@ -205,34 +184,27 @@ async function callAzureOpenAI(config, prompt) {
   };
 }
 
-async function callOllama(config, prompt) {
+async function callOllama(config, prompt, systemPrompt) {
   const endpoint = String(config.endpoint || "http://localhost:11434").replace(/\/$/, "");
-
+  const isJson = !systemPrompt || systemPrompt === SYSTEM_JSON;
   const response = await fetch(`${endpoint}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: config.model || "llama3",
       stream: false,
-      format: "json",
+      ...(isJson ? { format: "json" } : {}),
       messages: [
-        { role: "system", content: "You are a network error analysis assistant. Always return valid JSON only." },
+        { role: "system", content: systemPrompt || SYSTEM_JSON },
         { role: "user", content: prompt }
       ]
     })
   });
-
-  if (!response.ok) {
-    throw new Error(`Ollama ${response.status}: connection failed (${endpoint})`);
-  }
-
+  if (!response.ok) throw new Error(`Ollama ${response.status}: connection failed (${endpoint})`);
   const data = await response.json();
   return {
     text: data.message?.content || "",
-    usage: {
-      input: Number(data.prompt_eval_count || 0),
-      output: Number(data.eval_count || 0)
-    }
+    usage: { input: Number(data.prompt_eval_count || 0), output: Number(data.eval_count || 0) }
   };
 }
 
@@ -425,22 +397,19 @@ const GithubCopilotAPI = {
   }
 };
 
-async function callGitHubCopilot(config, prompt) {
+async function callGitHubCopilot(config, prompt, systemPrompt) {
   const { githubCopilotAuth: auth } = await chrome.storage.local.get("githubCopilotAuth");
-  if (!auth?.accessToken) {
-    throw new Error("GitHub Copilot login required in settings");
-  }
-
+  if (!auth?.accessToken) throw new Error("GitHub Copilot login required in settings");
   const sessionToken = await GithubCopilotAPI.ensureSessionToken(auth);
+  const isJson = !systemPrompt || systemPrompt === SYSTEM_JSON;
   const requestBody = JSON.stringify({
     model: config.model || "gpt-4o",
     messages: [
-      { role: "system", content: "You are a network error analysis assistant. Always return valid JSON only." },
+      { role: "system", content: systemPrompt || SYSTEM_JSON },
       { role: "user", content: prompt }
     ],
-    max_tokens: 900,
     temperature: 0.2,
-    response_format: { type: "json_object" }
+    ...(isJson ? { response_format: { type: "json_object" } } : {})
   });
 
   const mapOpenAIResponse = (data) => ({
@@ -505,37 +474,30 @@ async function callGitHubCopilot(config, prompt) {
   return mapOpenAIResponse(await fallback.json());
 }
 
-async function callAI(provider, config, prompt) {
-  let raw;
-
+async function callProviderRaw(provider, config, prompt, systemPrompt) {
   switch (provider) {
-    case "openai":
-      raw = await callOpenAI(config, prompt);
-      break;
-    case "claude":
-      raw = await callClaude(config, prompt);
-      break;
-    case "azure_openai":
-      raw = await callAzureOpenAI(config, prompt);
-      break;
-    case "ollama":
-      raw = await callOllama(config, prompt);
-      break;
-    case "github_copilot":
-      raw = await callGitHubCopilot(config, prompt);
-      break;
-    default:
-      throw new Error(`Unknown provider: ${provider}`);
+    case "openai": return callOpenAI(config, prompt, systemPrompt);
+    case "claude": return callClaude(config, prompt, systemPrompt);
+    case "azure_openai": return callAzureOpenAI(config, prompt, systemPrompt);
+    case "ollama": return callOllama(config, prompt, systemPrompt);
+    case "github_copilot": return callGitHubCopilot(config, prompt, systemPrompt);
+    default: throw new Error(`Unknown provider: ${provider}`);
   }
+}
 
-  return {
-    result: extractJson(raw.text),
-    usage: raw.usage
-  };
+async function callAI(provider, config, prompt) {
+  const raw = await callProviderRaw(provider, config, prompt, SYSTEM_JSON);
+  return { result: extractJson(raw.text), usage: raw.usage };
+}
+
+async function callAIText(provider, config, prompt, systemPrompt) {
+  const raw = await callProviderRaw(provider, config, prompt, systemPrompt || SYSTEM_CHAT);
+  return { text: String(raw.text || "").trim(), usage: raw.usage };
 }
 
 globalThis.AIProviders = {
   PROVIDERS,
   callAI,
+  callAIText,
   GithubCopilotAPI
 };

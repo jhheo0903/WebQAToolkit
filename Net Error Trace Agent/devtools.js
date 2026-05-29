@@ -1,5 +1,6 @@
 const STORAGE_KEY = "capturedErrors";
 const MAX_CAPTURED_ITEMS = 100;
+const CAPTURE_FILTER_KEY = "captureStatusFilter";
 
 chrome.devtools.panels.create(
   "Net Error Trace",
@@ -46,6 +47,19 @@ async function storeCapture(capture) {
   });
 }
 
+const DEFAULT_CAPTURE_RANGES = ["5xx"];
+
+function isStatusCaptured(status, ranges) {
+  const activeRanges = Array.isArray(ranges) && ranges.length > 0 ? ranges : DEFAULT_CAPTURE_RANGES;
+  return activeRanges.some((range) => {
+    if (range === "2xx") return status >= 200 && status < 300;
+    if (range === "3xx") return status >= 300 && status < 400;
+    if (range === "4xx") return status >= 400 && status < 500;
+    if (range === "5xx") return status >= 500 && status < 600;
+    return false;
+  });
+}
+
 chrome.devtools.network.onRequestFinished.addListener((request) => {
   if (isScriptOrStylesheet(request)) {
     return;
@@ -57,25 +71,29 @@ chrome.devtools.network.onRequestFinished.addListener((request) => {
   }
 
   const status = request.response.status;
-  if (status < 500 || status >= 600) {
-    return;
-  }
 
-  request.getContent((body) => {
-    const capture = {
-      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      url,
-      method: request.request.method,
-      status: request.response.status,
-      requestHeaders: request.request.headers,
-      requestPayload: extractRequestPayload(request),
-      responseHeaders: request.response.headers,
-      responseBody: body || null,
-      timing: request.time,
-      timestamp: new Date().toISOString(),
-      tabId: chrome.devtools.inspectedWindow.tabId
-    };
+  chrome.storage.local.get(CAPTURE_FILTER_KEY, (result) => {
+    const ranges = result[CAPTURE_FILTER_KEY];
+    if (!isStatusCaptured(status, ranges)) {
+      return;
+    }
 
-    storeCapture(capture);
+    request.getContent((body) => {
+      const capture = {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        url,
+        method: request.request.method,
+        status: request.response.status,
+        requestHeaders: request.request.headers,
+        requestPayload: extractRequestPayload(request),
+        responseHeaders: request.response.headers,
+        responseBody: body || null,
+        timing: request.time,
+        timestamp: new Date().toISOString(),
+        tabId: chrome.devtools.inspectedWindow.tabId
+      };
+
+      storeCapture(capture);
+    });
   });
 });
