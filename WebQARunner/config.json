@@ -1,0 +1,24 @@
+{
+  "azure": {
+    "endpoint": "https://YOUR_RESOURCE.openai.azure.com",
+    "api_key": "YOUR_API_KEY",
+    "deployment": "gpt-4o",
+    "api_version": "2024-02-01",
+    "temperature": 0
+  },
+  "browser": {
+    "type": "chromium",
+    "headless": true,
+    "proxy": null,
+    "viewport": { "width": 1280, "height": 800 }
+  },
+  "runner": {
+    "max_steps": 20,
+    "dom_stable_ms": 600,
+    "dom_max_wait_ms": 8000,
+    "screenshot_on_each_step": true
+  },
+  "base_url": null,
+  "scenarios_file": "scenarios/scenarios.json",
+  "report_dir": "reports"
+}

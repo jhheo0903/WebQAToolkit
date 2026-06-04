@@ -1,0 +1,14 @@
+[
+  {
+    "id": "SC-001",
+    "title": "로그인 테스트",
+    "url": "http://intranet.example.com/login",
+    "scenario": "admin@company.com 계정으로 로그인하고 대시보드 페이지가 표시되는지 확인해"
+  },
+  {
+    "id": "SC-002",
+    "title": "사용자 목록 조회",
+    "url": "http://intranet.example.com",
+    "scenario": "사용자 관리 메뉴로 이동해서 사용자 목록 테이블이 표시되는지 확인해"
+  }
+]
