@@ -16,9 +16,11 @@
     "max_steps": 20,
     "dom_stable_ms": 600,
     "dom_max_wait_ms": 8000,
-    "screenshot_on_each_step": true
+    "navigation_timeout_ms": 10000,
+    "action_timeout_ms": 10000,
+    "screenshot_full_page": true
   },
-  "base_url": null,
+  "base_url": "https://YOUR_BASE_URL",
   "scenarios_file": "scenarios/scenarios.json",
   "report_dir": "reports"
 }

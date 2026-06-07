@@ -79,6 +79,16 @@ async def main(args: argparse.Namespace) -> int:
 
         viewport = browser_config.get("viewport", {"width": 1280, "height": 800})
 
+        # Single context shared across all scenarios — login state is preserved
+        context = await browser.new_context(viewport=viewport)
+        page = await context.new_page()
+
+        base_url = config.get("base_url")
+        nav_timeout = runner_config.get("navigation_timeout_ms", 10000)
+        if base_url:
+            log.info("Navigating to base URL: %s", base_url)
+            await page.goto(base_url, timeout=nav_timeout)
+
         for i, scenario in enumerate(scenarios):
             scenario_id: str = scenario.get("id") or f"SC-{i + 1:03d}"
             scenario_text: str = (
@@ -99,17 +109,11 @@ async def main(args: argparse.Namespace) -> int:
                 continue
 
             log.info(
-                "[%s] Starting: %s",
+                "[%s] Starting: %s  (current URL: %s)",
                 scenario_id,
                 scenario.get("title") or scenario_text[:60],
+                page.url,
             )
-
-            context = await browser.new_context(viewport=viewport)
-            page = await context.new_page()
-
-            start_url = scenario.get("url") or config.get("base_url")
-            if start_url:
-                await page.goto(start_url, timeout=15000)
 
             result = await run_scenario(
                 page=page,
@@ -123,8 +127,6 @@ async def main(args: argparse.Namespace) -> int:
             result["title"] = scenario.get("title", "")
             all_results.append(result)
 
-            await context.close()
-
             sym = {"pass": "✓", "fail": "✗"}.get(result["status"], "~")
             log.info(
                 "[%s] %s %s  (%d steps, %.1fs)",
@@ -135,22 +137,18 @@ async def main(args: argparse.Namespace) -> int:
                 result["elapsed"],
             )
 
+        await context.close()
         await browser.close()
 
     report_path = report_dir / "report.html"
     generate_report(all_results, report_path)
     log.info("Report saved: %s", report_path)
 
-    # JSON report strips base64 screenshots to keep the file small
-    slim: list[dict] = []
-    for r in all_results:
-        slim.append({
-            **r,
-            "steps": [
-                {k: v for k, v in s.items() if k != "screenshots"}
-                for s in r.get("steps", [])
-            ],
-        })
+    # JSON report strips base64 final screenshot to keep the file small
+    slim: list[dict] = [
+        {k: v for k, v in r.items() if k != "final_screenshot"}
+        for r in all_results
+    ]
     json_path = report_dir / "report.json"
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(slim, f, ensure_ascii=False, indent=2)

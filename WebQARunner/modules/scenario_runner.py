@@ -6,6 +6,7 @@ import asyncio
 import base64
 import logging
 import time
+from datetime import datetime
 from pathlib import Path
 
 from playwright.async_api import Page
@@ -27,7 +28,9 @@ async def run_scenario(
     max_steps: int = config.get("max_steps", 20)
     stable_ms: int = config.get("dom_stable_ms", 600)
     max_wait_ms: int = config.get("dom_max_wait_ms", 8000)
-    take_screenshots: bool = config.get("screenshot_on_each_step", True)
+    nav_timeout: int = config.get("navigation_timeout_ms", 10000)
+    action_timeout: int = config.get("action_timeout_ms", 5000)
+    full_page: bool = config.get("screenshot_full_page", True)
 
     steps: list[dict] = []
     history: list[dict] = []
@@ -37,13 +40,6 @@ async def run_scenario(
 
     for step_num in range(1, max_steps + 1):
         log.debug("[%s] Step %d — analyzing DOM", scenario_id, step_num)
-
-        before_b64 = ""
-        if take_screenshots:
-            before_b64 = await _screenshot_b64(
-                page,
-                screenshots_dir / f"{scenario_id}_step_{step_num:02d}_before.png",
-            )
 
         try:
             dom_state = await get_dom_state(page)
@@ -72,27 +68,38 @@ async def run_scenario(
         if action_type == "done":
             status = "pass" if action.get("pass") else "fail"
             reason = action.get("reason", "")
-            steps.append(_make_step(step_num, thinking, action, before_b64, ""))
+            steps.append(_make_step(step_num, thinking, action))
             history.append({"step": step_num, "action": action})
             break
 
-        after_b64 = ""
+        # Validate elementId for click/fill before attempting execution
+        if action_type in ("click", "fill") and not action.get("elementId", "").strip():
+            log.warning(
+                "[%s] Step %d — %s action returned with no elementId; skipping execution",
+                scenario_id, step_num, action_type,
+            )
+            hint = {**action, "elementId": "ERROR: elementId was empty — must use el-XXX from INTERACTABLE ELEMENTS"}
+            steps.append(_make_step(step_num, thinking, hint))
+            history.append({"step": step_num, "action": hint})
+            if _is_stuck(history):
+                status = "fail"
+                reason = "AI repeatedly returned action without elementId"
+                break
+            continue
+
         try:
-            navigated = await _execute_action(page, action)
-            if navigated:
-                await wait_after_navigation(page, timeout_ms=10000)
+            navigated = await _execute_action(page, action, action_timeout, nav_timeout)
+            if navigated or action_type == "click":
+                # navigate 액션 및 click 액션 모두 networkidle + DOM stable 대기
+                # click은 페이지 이동이 없어도 XHR이 끝날 때까지 기다려야 하고,
+                # networkidle은 네트워크가 없으면 즉시 리턴되므로 성능 손해 없음
+                await wait_after_navigation(page, timeout_ms=nav_timeout)
             else:
                 await wait_after_action(page, stable_ms=stable_ms, max_ms=max_wait_ms)
         except Exception as exc:
             log.warning("[%s] Step %d — action execution failed: %s", scenario_id, step_num, exc)
 
-        if take_screenshots:
-            after_b64 = await _screenshot_b64(
-                page,
-                screenshots_dir / f"{scenario_id}_step_{step_num:02d}_after.png",
-            )
-
-        steps.append(_make_step(step_num, thinking, action, before_b64, after_b64))
+        steps.append(_make_step(step_num, thinking, action))
         history.append({"step": step_num, "action": action})
 
         if _is_stuck(history):
@@ -104,6 +111,13 @@ async def run_scenario(
         status = "incomplete"
         reason = f"Reached max steps ({max_steps}) without completion"
 
+    # Capture one final screenshot at the end of the scenario
+    final_b64 = await _screenshot_b64(
+        page,
+        screenshots_dir / f"{scenario_id}_final.png",
+        full_page=full_page,
+    )
+
     elapsed = time.monotonic() - start_time
     return {
         "id": scenario_id,
@@ -111,27 +125,33 @@ async def run_scenario(
         "status": status,
         "reason": reason,
         "steps": steps,
+        "final_screenshot": final_b64,
         "elapsed": round(elapsed, 1),
     }
 
 
-async def _execute_action(page: Page, action: dict) -> bool:
+async def _execute_action(
+    page: Page,
+    action: dict,
+    action_timeout: int = 5000,
+    nav_timeout: int = 10000,
+) -> bool:
     """Execute action and return True if navigation occurred."""
     action_type = action.get("type", "")
 
     if action_type == "click":
         locator = page.locator(f'[data-webqa-id="{action.get("elementId", "")}"]')
-        await locator.scroll_into_view_if_needed(timeout=5000)
-        await locator.click(timeout=5000)
+        await locator.scroll_into_view_if_needed(timeout=action_timeout)
+        await locator.click(timeout=action_timeout)
         return False
 
     if action_type == "fill":
         locator = page.locator(f'[data-webqa-id="{action.get("elementId", "")}"]')
-        await locator.fill(action.get("value", ""), timeout=5000)
+        await locator.fill(action.get("value", ""), timeout=action_timeout)
         return False
 
     if action_type == "navigate":
-        await page.goto(action.get("url", ""), timeout=10000)
+        await page.goto(action.get("url", ""), timeout=nav_timeout)
         return True
 
     if action_type == "wait":
@@ -142,27 +162,20 @@ async def _execute_action(page: Page, action: dict) -> bool:
     return False
 
 
-async def _screenshot_b64(page: Page, save_path: Path) -> str:
+async def _screenshot_b64(page: Page, save_path: Path, full_page: bool = True) -> str:
     try:
-        data = await page.screenshot(full_page=False)
+        data = await page.screenshot(full_page=full_page)
         save_path.write_bytes(data)
         return base64.b64encode(data).decode()
     except Exception:
         return ""
 
 
-def _make_step(
-    step_num: int,
-    thinking: str,
-    action: dict,
-    before_b64: str,
-    after_b64: str,
-) -> dict:
+def _make_step(step_num: int, thinking: str, action: dict) -> dict:
     return {
         "step": step_num,
         "thinking": thinking,
         "action": action,
-        "screenshots": {"before": before_b64, "after": after_b64},
     }
 
 
@@ -190,7 +203,10 @@ def _log_step(log: logging.Logger, sid: str, step_num: int, action_type: str, ac
 def _build_prompt(dom_state: dict, scenario_text: str, history: list[dict]) -> str:
     lines: list[str] = []
 
+    now = datetime.now()
     lines += [
+        f"[CURRENT DATETIME] {now.strftime('%Y-%m-%d %H:%M:%S')} (today is {now.strftime('%Y-%m-%d')})",
+        "",
         "[CURRENT PAGE]",
         f"URL: {dom_state['url']}",
         f"Title: {dom_state['title']}",
@@ -214,8 +230,11 @@ def _build_prompt(dom_state: dict, scenario_text: str, history: list[dict]) -> s
         for h in history[-5:]:
             a = h["action"]
             t = a.get("type", "")
-            if t in ("click", "fill"):
-                lines.append(f"  Step {h['step']}: {t} {a.get('elementId', '')} {a.get('value', '')}")
+            eid = a.get("elementId", "")
+            if t == "click":
+                lines.append(f"  Step {h['step']}: click {eid}")
+            elif t == "fill":
+                lines.append(f"  Step {h['step']}: fill {eid} = \"{a.get('value', '')}\"")
             elif t == "navigate":
                 lines.append(f"  Step {h['step']}: navigate → {a.get('url', '')}")
             elif t == "wait":
@@ -223,17 +242,20 @@ def _build_prompt(dom_state: dict, scenario_text: str, history: list[dict]) -> s
         lines.append("")
 
     lines += [
-        "[RULES]",
-        "- Use click for buttons, links, checkboxes, select options",
-        "- Use fill for text inputs and textareas",
-        "- Use navigate to go to a specific URL directly",
-        "- Use wait (ms: 1000-3000) when content is still loading",
-        '- Use done when complete: {"type":"done","pass":true/false,"reason":"what you verified"}',
-        "- Never repeat the same action consecutively",
-        "- If the test goal is achieved, call done immediately",
+        "[RESPONSE FORMAT]",
+        "Respond with JSON only (no markdown). Choose exactly one action:",
         "",
-        "Respond with JSON only (no markdown):",
-        '{"thinking": "brief reasoning", "action": {"type": "click|fill|navigate|wait|done", ...}}',
+        '  click:    {"thinking":"...","action":{"type":"click",   "elementId":"el-XXX"}}',
+        '  fill:     {"thinking":"...","action":{"type":"fill",    "elementId":"el-XXX","value":"text"}}',
+        '  navigate: {"thinking":"...","action":{"type":"navigate","url":"https://..."}}',
+        '  wait:     {"thinking":"...","action":{"type":"wait",    "ms":2000}}',
+        '  done:     {"thinking":"...","action":{"type":"done",    "pass":true,"reason":"what you verified"}}',
+        "",
+        "RULES:",
+        "- elementId MUST be one of the [el-XXX] IDs listed in INTERACTABLE ELEMENTS above",
+        "- Never omit elementId for click or fill — it is required",
+        "- Never repeat the same action consecutively",
+        "- Call done immediately once the scenario goal is achieved or confirmed failed",
     ]
 
     return "\n".join(lines)

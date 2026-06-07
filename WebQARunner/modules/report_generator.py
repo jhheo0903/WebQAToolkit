@@ -52,9 +52,18 @@ def _render_scenario(result: dict) -> str:
     elapsed = result.get("elapsed", 0)
     steps = result.get("steps", [])
     reason = html.escape(result.get("reason", ""))
+    final_b64 = result.get("final_screenshot", "")
 
     reason_html = f'<div class="reason">{reason}</div>' if reason else ""
     steps_html = "".join(_render_step(s) for s in steps)
+    final_img_html = ""
+    if final_b64:
+        final_img_html = (
+            f'<div class="final-screenshot">'
+            f'<div class="shot-label">Final</div>'
+            f'<img src="data:image/png;base64,{final_b64}" alt="Final" loading="lazy" onclick="openImg(this)">'
+            f'</div>'
+        )
 
     return f"""
 <div class="scenario {status}">
@@ -64,6 +73,7 @@ def _render_scenario(result: dict) -> str:
   </div>
   <div class="sc-body">
     {reason_html}
+    {final_img_html}
     {steps_html}
   </div>
 </div>"""
@@ -74,16 +84,9 @@ def _render_step(step: dict) -> str:
     thinking = html.escape(step.get("thinking", ""))
     action = step.get("action", {})
     action_type = action.get("type", "")
-    shots = step.get("screenshots", {})
 
     action_desc = html.escape(_describe_action(action))
     thinking_html = f'<div class="thinking">{thinking}</div>' if thinking else ""
-
-    before_html = _img_tag(shots.get("before", ""), "Before")
-    after_html = _img_tag(shots.get("after", ""), "After")
-    shots_html = ""
-    if before_html or after_html:
-        shots_html = f'<div class="screenshots">{before_html}{after_html}</div>'
 
     return f"""
   <div class="step">
@@ -92,7 +95,6 @@ def _render_step(step: dict) -> str:
       <span class="step-action {action_type}">{action_desc}</span>
     </div>
     {thinking_html}
-    {shots_html}
   </div>"""
 
 
